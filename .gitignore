@@ -88,3 +88,11 @@ iOSInjectionProject/
 
 # End of https://www.toptal.com/developers/gitignore/api/swift
 fastlane/README.md
+
+# local-only material: agent docs, archived code, design docs & tooling
+CLAUDE.md
+AGENTS.md
+Archive/
+docs/
+
+.DS_Store
