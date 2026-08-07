@@ -31,12 +31,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             } else {
                 ApiRequest.refreshToken()
             }
-            window?.rootViewController = BLTabBarViewController()
+            window?.rootViewController = AppDelegate.makeMainRoot()
         } else {
             window?.rootViewController = LoginViewController.create()
         }
-        WebRequest.requestIndex()
+        WebRequest.ensureFingerprint {
+            WebRequest.requestIndex()
+        }
         window?.makeKeyAndVisible()
+
+        #if DEBUG
+            if TheaterPreviewLauncher.isEnabled, let root = window?.rootViewController {
+                TheaterPreviewLauncher.present(from: root)
+            }
+        #endif
+
         return true
     }
 
@@ -45,15 +54,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func showLogin() {
-        replaceRootViewController(with: LoginViewController.create(), animated: false)
+        replaceRootViewController(with: LoginViewController.create(), animated: true)
+    }
+
+    /// Root for a logged-in session. The left rail replaces the stock tvOS
+    /// tab bar, whose 68pt top-bar geometry is not configurable. Revert the
+    /// whole navigation rework by returning `BLTabBarViewController()` here.
+    static func makeMainRoot() -> UIViewController {
+        RailContainerViewController()
     }
 
     func showTabBar() {
-        replaceRootViewController(with: BLTabBarViewController(), animated: false)
+        replaceRootViewController(with: AppDelegate.makeMainRoot(), animated: true)
     }
 
     func resetTabBar() {
-        replaceRootViewController(with: BLTabBarViewController(), animated: true)
+        replaceRootViewController(with: AppDelegate.makeMainRoot(), animated: true)
     }
 
     static var shared: AppDelegate {
