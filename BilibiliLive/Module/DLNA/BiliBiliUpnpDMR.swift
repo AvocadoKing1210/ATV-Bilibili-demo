@@ -354,19 +354,20 @@ extension BiliBiliUpnpDMR {
         let cid = json["cid"].intValue
         let epid = json["epid"].intValue
 
-        let player: VideoDetailViewController
-        if epid > 0 {
-            player = VideoDetailViewController.create(epid: epid)
-        } else {
-            player = VideoDetailViewController.create(aid: aid, cid: cid)
-        }
-        let topMost = UIViewController.topMostViewController()
-        if let _ = AppDelegate.shared.window!.rootViewController?.presentedViewController {
-            AppDelegate.shared.window!.rootViewController?.dismiss(animated: false) {
-                player.present(from: UIViewController.topMostViewController(), direatlyEnterVideo: true)
+        let start = {
+            let host = UIViewController.topMostViewController()
+            if epid > 0 {
+                VideoPlaybackPresenter.present(epid: epid, from: host)
+            } else {
+                VideoPlaybackPresenter.present(aid: aid, cid: cid, from: host)
             }
+        }
+        // Casting arrives out of nowhere: whatever is already up has to go
+        // before the new video can be presented.
+        if AppDelegate.shared.window?.rootViewController?.presentedViewController != nil {
+            AppDelegate.shared.window?.rootViewController?.dismiss(animated: false, completion: start)
         } else {
-            player.present(from: topMost, direatlyEnterVideo: true)
+            start()
         }
     }
 }

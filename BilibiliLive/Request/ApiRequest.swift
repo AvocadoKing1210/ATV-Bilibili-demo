@@ -303,10 +303,12 @@ enum ApiRequest {
             var overlay: DisplayOverlay? {
                 var leftItems = [DisplayOverlay.DisplayOverlayItem]()
                 var rightItems = [DisplayOverlay.DisplayOverlayItem]()
-                if let text = cover_left_text_1 {
+                // `statNumber` strips the unit the server bakes in — the glyph
+                // beside each figure already carries it.
+                if let text = cover_left_text_1?.statNumber {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: text))
                 }
-                if let text = cover_left_text_2 {
+                if let text = cover_left_text_2?.statNumber {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: text))
                 }
                 if let text = cover_right_text ?? cover_left_text_3 {

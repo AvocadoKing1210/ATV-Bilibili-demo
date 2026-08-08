@@ -63,7 +63,7 @@ enum WebRequest {
         static let userEpisodeInfo = "https://api.bilibili.com/pgc/season/episode/web/info"
         static let danmuWebView = "https://api.bilibili.com/x/v2/dm/web/view"
         static let danmuList = "https://api.bilibili.com/x/v2/dm/list/seg.so"
-//        static let spi = "https://api.bilibili.com/x/frontend/finger/spi"
+        static let spi = "https://api.bilibili.com/x/frontend/finger/spi"
     }
 
     static func requestData(method: HTTPMethod = .get,
@@ -201,6 +201,38 @@ enum WebRequest {
         })
     }
 
+    /// 获取 buvid3/buvid4 设备指纹并写入 cookie。
+    /// 缺少 buvid 时 web 端风控会对 feed/关注等接口返回 -352，
+    /// 首页 Set-Cookie 已不可靠，需显式调用 finger/spi 接口获取。
+    static func ensureFingerprint(complete: (() -> Void)? = nil) {
+        guard CookieHandler.shared.buvid3().isEmpty else {
+            complete?()
+            return
+        }
+        requestJSON(url: EndPoint.spi) { result in
+            defer { complete?() }
+            guard case let .success(json) = result else {
+                Logger.warn("finger/spi request failed")
+                return
+            }
+            let pairs = [("buvid3", json["b_3"].stringValue),
+                         ("buvid4", json["b_4"].stringValue)]
+            for (name, value) in pairs where !value.isEmpty {
+                if let cookie = HTTPCookie(properties: [
+                    .domain: ".bilibili.com",
+                    .path: "/",
+                    .name: name,
+                    .value: value,
+                    .expires: Date(timeIntervalSinceNow: 60 * 60 * 24 * 365),
+                ]) {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
+            }
+            CookieHandler.shared.backupCookies()
+            Logger.info("fingerprint cookies installed via finger/spi")
+        }
+    }
+
     static func requestPB<T: SwiftProtobuf.Message>(method: HTTPMethod = .get,
                                                     url: URLConvertible,
                                                     parameters: Parameters = [:],
@@ -305,13 +337,19 @@ extension WebRequest {
         try await request(url: EndPoint.userEpisodeInfo, parameters: ["ep_id": epid])
     }
 
+    /// The callback must fire on failure too. It used to be dropped, and a
+    /// caller that bridged this into async with `withCheckedContinuation` then
+    /// never resumed — one failed history request left the home screen on its
+    /// skeleton forever.
     static func requestHistory(complete: (([HistoryData]) -> Void)?) {
         request(url: "https://api.bilibili.com/x/v2/history") {
             (result: Result<[HistoryData], RequestError>) in
-            if let data = try? result.get() {
-                complete?(data)
-            }
+            complete?((try? result.get()) ?? [])
         }
+    }
+
+    static func requestHistory() async -> [HistoryData] {
+        (try? await request(url: "https://api.bilibili.com/x/v2/history")) ?? []
     }
 
     static func requestTopFeedRecommend(pageIndex: Int, pageSize: Int = 12) async throws -> WebTopFeedRecommendResponse {
@@ -481,6 +519,16 @@ extension WebRequest {
         requestJSON(method: .post, url: "https://api.bilibili.com/x/v3/fav/resource/deal", parameters: ["rid": aid, "type": 2, "del_media_ids": mid.map { "\($0)" }.joined(separator: ",")])
     }
 
+    /// 稍后再看. Separate from 收藏 — this is the transient queue, not a folder.
+    /// POSTs pick the csrf up from `requestJSON` itself.
+    static func requestAddToView(aid: Int) {
+        requestJSON(method: .post, url: "https://api.bilibili.com/x/v2/history/toview/add", parameters: ["aid": aid])
+    }
+
+    static func requestRemoveToView(aid: Int) {
+        requestJSON(method: .post, url: "https://api.bilibili.com/x/v2/history/toview/del", parameters: ["aid": aid])
+    }
+
     static func requestFavoriteStatus(aid: Int, complete: ((Bool) -> Void)?) {
         requestJSON(url: "https://api.bilibili.com/x/v2/fav/video/favoured", parameters: ["aid": aid]) {
             response in
@@ -579,7 +627,11 @@ extension WebRequest {
     }
 
     static func requestCid(aid: Int) async throws -> Int {
-        let res = try await requestJSON(url: "https://api.bilibili.com/x/player/pagelist?aid=\(aid)&jsonp=jsonp")
+        // Parameters, not an inline query string: WBI signing appends its own
+        // "?" + signed params to whatever url it is handed, so a url that
+        // already carries a query comes out with two of them.
+        let res = try await requestJSON(url: "https://api.bilibili.com/x/player/pagelist",
+                                        parameters: ["aid": aid, "jsonp": "jsonp"])
         let cid = res[0]["cid"].intValue
         return cid
     }
