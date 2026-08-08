@@ -36,7 +36,7 @@ enum CDNDiagnostics {
 
     /// 菜单手动测速 / 运行时切换：较大样本，结果更稳
     private static let fullProbeBytes = 2 * 1024 * 1024
-    /// 起播择优：小样本，控制在几百毫秒级，不拖慢起播
+    /// 择优采样：小样本，控制在几百毫秒级
     private static let quickProbeBytes = 256 * 1024
 
     private static let session: Session = {
@@ -61,7 +61,13 @@ enum CDNDiagnostics {
         await probeAll(urls: urls, bytes: fullProbeBytes, session: session)
     }
 
-    /// 起播用轻量测速，选出实测最快的 host；候选不足或全部失败时返回 nil。
+    /// 轻量测速，选出实测最快的 host；候选不足或全部失败时返回 nil。
+    ///
+    /// 曾经在 `playmedia` 里被 await，挡在 AVURLAsset 之前：候选是**串行**测的
+    /// （并发会互相抢带宽导致失真），每个 host 要 DNS + 建连 + TLS + 首字节 +
+    /// 256KB 传输，3 个候选实测 1.5–4.5s，全部超时时最坏 12s——而且抢走的正是
+    /// 首片需要的带宽。现在改为播放开始后再跑，结果记进
+    /// `CDNHostPreference` 供后续视频直接用，见 BVideoPlayPlugin。
     static func pickFastestHost(urls: [String]) async -> String? {
         guard urls.count > 1 else {
             return urls.first.flatMap { URLComponents(string: $0)?.host }
@@ -72,7 +78,7 @@ enum CDNDiagnostics {
             let speed = r.mbps.map { String(format: "%.1fMbps", $0) } ?? "失败"
             return "\(r.host)=\(speed)"
         }.joined(separator: ", ")
-        Logger.info("[cdn] 起播轻量测速 (\(quickProbeBytes / 1024)KB): \(summary)")
+        Logger.info("[cdn] 轻量测速 (\(quickProbeBytes / 1024)KB): \(summary)")
         return ranked.first(where: { $0.mbps != nil })?.host
     }
 

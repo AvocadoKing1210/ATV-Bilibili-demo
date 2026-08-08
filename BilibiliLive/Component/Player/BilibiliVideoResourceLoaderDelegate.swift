@@ -60,6 +60,13 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
     /// 播放中途检测到当前 host 吞吐撑不住时，外部（BVideoPlayPlugin）指定的优先 host，
     /// sidx 探测会把它排到候选队首，覆盖默认 URL 顺序
     private var preferredHost: String?
+    /// 续播 / 切流位置。写进生成的媒体播放列表（EXT-X-START），让 AVPlayer 一开始
+    /// 就从这里缓冲，而不是先从 0 灌满一整个缓冲区再被 seek 全部丢掉。
+    private var startPos: Int?
+    /// master 里第一条视频流——AVPlayer 起播默认选它，sidx 要预取的也是它
+    private var startVideoInfo: VideoPlayURLInfo.DashInfo.DashMediaInfo?
+    /// 实际标了 DEFAULT=YES 的那条音轨。开了无损时它是杜比/FLAC，不是 dash.audio.first
+    private var defaultAudioInfo: VideoPlayURLInfo.DashInfo.DashMediaInfo?
     deinit {
         cancelPendingIndexLoads()
         httpServer.stop()
@@ -79,6 +86,8 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         playlists.removeAll()
         audioRenditionIndex = 0
         hasAudioInMasterListAdded = false
+        defaultAudioInfo = nil
+        startVideoInfo = nil
         masterPlaylist = """
         #EXTM3U
         #EXT-X-VERSION:6
@@ -97,6 +106,33 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
     /// 稳态选流靠它，所以这里的峰值宁可略高。
     private static func peakBandwidth(forAverage average: Int) -> Int {
         return Int(Double(average) * 1.5)
+    }
+
+    /// 起播时排在 master 最前的那条流。
+    ///
+    /// AVPlayer 没有历史带宽估计时会从播放列表里的第一条 variant 开始，而这里的流
+    /// 是按 bandwidth 降序排的——也就是说每次起播都从当前档位**最贵**的那条开始灌
+    /// 缓冲，首帧要等的字节数最多。
+    ///
+    /// 取「最高画质档内部码率最低的编码」（通常是 HEVC）：同一个 qn 下分辨率、
+    /// 帧率、VIDEO-RANGE 完全一致，画面上看不出区别，tvOS content match 也不受
+    /// 影响，但首片能少下 30%~40% 的字节。稳态选流仍由 ABR 按
+    /// AVERAGE-BANDWIDTH 决定，不受这里的顺序限制。
+    private static func startVariant(from videos: [VideoPlayURLInfo.DashInfo.DashMediaInfo])
+        -> VideoPlayURLInfo.DashInfo.DashMediaInfo?
+    {
+        guard let top = videos.first else { return nil }
+        return videos.filter { $0.id == top.id }.min { $0.bandwidth < $1.bandwidth }
+    }
+
+    /// `#EXT-X-START`，写在媒体播放列表里，告诉 AVPlayer 从哪儿开始缓冲。
+    ///
+    /// 只有在播放列表真的按 byte-range 切了分片时才能用：播放器要靠分片表直接跳到
+    /// 目标分片。没有 sidx 的单分片降级列表必须省掉它，否则起播会被卡死，
+    /// 见 `getVideoPlayList` 的降级分支。
+    private var startTag: String {
+        guard let startPos, startPos > 0 else { return "" }
+        return "#EXT-X-START:TIME-OFFSET=\(startPos),PRECISE=YES\n"
     }
 
     private func addVideoPlayBackInfo(info: VideoPlayURLInfo.DashInfo.DashMediaInfo, url: String, duration: Int) {
@@ -184,6 +220,18 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
               let sidxResult = sidxResult
         else {
             currentSegmentHost = URLComponents(string: info.url)?.host
+            // 没有 sidx 就没有分片表，整条流只能当**一个**分片交给 AVPlayer——
+            // 这条路上绝不能带 EXT-X-START。分片内部没有任何索引，播放器为了满足
+            // TIME-OFFSET 只能从文件开头顺序拉、一路解到续播点才肯出第一帧：续播
+            // 位置越靠后黑得越久，而这期间系统 transport 被我们关掉了，连转圈都
+            // 没有，看起来就是"点了永远不播"。历史记录/继续观看进来的视频正好都
+            // 带续播位置，所以这个坑只在那条路上踩得到。
+            //
+            // 改为从头起播，续播位置交回 BVideoPlayPlugin.playerWillStart 的 seek
+            // 兜底（EXT-X-START 本来就只是省掉那次 seek 的优化，不是必需项）。
+            if let startPos, startPos > 0 {
+                Logger.warn("[playlist] sidx 缺失，退回单分片播放列表，放弃 EXT-X-START(\(startPos)s)，改由起播后 seek 续播")
+            }
             return """
             #EXTM3U
             #EXT-X-VERSION:7
@@ -209,7 +257,7 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         #EXT-X-MEDIA-SEQUENCE:1
         #EXT-X-INDEPENDENT-SEGMENTS
         #EXT-X-PLAYLIST-TYPE:VOD
-        #EXT-X-MAP:URI="\(segmentURL)",BYTERANGE="\(moovIdx + 1)@\(moovOffset)"
+        \(startTag)#EXT-X-MAP:URI="\(segmentURL)",BYTERANGE="\(moovIdx + 1)@\(moovOffset)"
 
         """
         offset += 1
@@ -246,6 +294,9 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         masterPlaylist.append(content)
 
         // 只有在真正添加音轨时才更新状态
+        if isFirst {
+            defaultAudioInfo = info
+        }
         hasAudioInMasterListAdded = true
         audioRenditionIndex += 1
         videoInfo.append(PlaybackInfo(info: info, url: url, duration: duration))
@@ -269,6 +320,8 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         hasAudioInMasterListAdded = true
         audioRenditionIndex += 1
 
+        // 整条音轨一个分片，没有分片表——和 getVideoPlayList 的降级分支同理，
+        // 这里也不能写 EXT-X-START，见 `startTag`。
         let playList = """
         #EXTM3U
         #EXT-X-VERSION:6
@@ -316,10 +369,12 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         playlists.append(playList)
     }
 
-    func setBilibili(info: VideoPlayURLInfo, subtitles: [SubtitleData], aid: Int, maxQuality: Int? = nil, streamIndex: Int? = nil, preferredHost: String? = nil) {
+    func setBilibili(info: VideoPlayURLInfo, subtitles: [SubtitleData], aid: Int, maxQuality: Int? = nil, streamIndex: Int? = nil, preferredHost: String? = nil, startPos: Int? = nil) {
         playInfo = info
         self.aid = aid
         self.preferredHost = preferredHost
+        // 在 setDelegate 之前写入，loader 队列不会看到写了一半的状态
+        self.startPos = startPos
         reset()
         hasSubtitle = subtitles.count > 0
         var videos = info.dash.video
@@ -378,11 +433,19 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         // 这样可以确保在同一画质等级下，AVPlayer 会选择码率最高的流
         videos.sort { $0.bandwidth > $1.bandwidth }
 
+        // 稳态首选流仍是码率最高的那条：卡顿健康检测拿它的 bandwidth 当
+        // requiredMbps，CDN 候选也要按它来，所以这里不能改成起播流。
         collectCDNCandidates(from: videos.first)
+
+        // 起播流排到最前——AVPlayer 没有带宽历史时就从第一条 variant 开始。
+        // 其余顺序不动，ABR 仍按 AVERAGE-BANDWIDTH 决定稳态选流。
+        let startStream = Self.startVariant(from: videos)
+        startVideoInfo = startStream ?? videos.first
+        let ordered = (startStream.map { [$0] } ?? []) + videos.filter { $0 != startStream }
 
         // 添加所有 CDN 节点的 URL，让 AVPlayer 自动选择最快的
         // 这样可以解决单个 CDN 节点速度慢的问题
-        for video in videos {
+        for video in ordered {
             for url in video.playableURLs {
                 addVideoPlayBackInfo(info: video, url: url, duration: info.dash.duration)
             }
@@ -433,6 +496,25 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         }
 
         masterPlaylist.append("\n#EXT-X-ENDLIST\n")
+
+        // 预取 AVPlayer 起播会选的那两条流（master 里第一条视频 + 标了 DEFAULT
+        // 的音轨）的 sidx，与 master playlist 加载并行，缩短起播链路；actor 内有
+        // in-progress 去重。preferredHost 只对视频流生效（音频码率低，host 选择
+        // 影响不大）。
+        //
+        // 这两个必须跟真正被选中的流对齐：预取 videos.first 而起播用的是别的编码，
+        // 或者开了无损时预取 dash.audio.first 而 DEFAULT 是杜比轨，都会让起播卡在
+        // 一次没预热的 sidx 上——预取反而全白做。
+        if let video = startVideoInfo {
+            Task.detached { [segmentInfoCache, preferredHost] in
+                _ = await segmentInfoCache.sidx(from: video, preferredHost: preferredHost)
+            }
+        }
+        if let audio = defaultAudioInfo {
+            Task.detached { [segmentInfoCache] in
+                _ = await segmentInfoCache.sidx(from: audio)
+            }
+        }
 
         Logger.debug("masterPlaylist: \(masterPlaylist)")
     }
