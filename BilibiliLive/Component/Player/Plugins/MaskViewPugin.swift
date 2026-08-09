@@ -35,6 +35,13 @@ class MaskViewPugin: NSObject, CommonPlayerPlugin {
         }
     }
 
+    /// Let the provider fetch what it needs only once there is a picture — see
+    /// `BMaskProvider.start`. Called on every rate>0 transition, so `start()`
+    /// has to be idempotent.
+    func playerDidStart(player: AVPlayer) {
+        maskProvider.start()
+    }
+
     func playerDidCleanUp(player: AVPlayer) {
         if let observer {
             player.removeTimeObserver(observer)

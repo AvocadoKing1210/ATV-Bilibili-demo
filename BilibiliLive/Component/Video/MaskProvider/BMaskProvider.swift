@@ -25,6 +25,20 @@ class BMaskProvider: MaskProvider {
     init(info: PlayerInfo.MaskInfo, videoSize: CGSize) {
         self.info = info
         self.videoSize = videoSize
+    }
+
+    /// The mask file is a whole-file download plus an SVG parse per frame.
+    ///
+    /// It used to start in `init`, which runs inside `generatePlayerPlugin` —
+    /// i.e. immediately before the play URL is turned into an asset, so it was
+    /// competing for bandwidth with the very first video segments and for CPU
+    /// with the transition. Nothing needs it until danmaku are on screen, so it
+    /// waits for the picture (see `MaskViewPugin.playerDidStart`).
+    ///
+    /// Idempotent: `playerDidStart` fires on every rate>0 transition, including
+    /// every resume and every speed change.
+    func start() {
+        guard downloadTask == nil else { return }
         downloadTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
             try? await self.download()

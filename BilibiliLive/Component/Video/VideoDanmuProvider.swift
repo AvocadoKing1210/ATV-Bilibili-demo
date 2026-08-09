@@ -55,6 +55,8 @@ class VideoDanmuProvider: DanmuProviderProtocol {
 
     private var lastTime: TimeInterval = 0
     private var lastSegmentIdx: Int = 0
+    /// Segment covering the resume position — the one `loadInitialDanmu` fetches.
+    private var startSegmentIdx: Int = 1
     private var upDanmuIdx: Int = 0
     private var danmuIdx: Int = 0
 
@@ -66,7 +68,12 @@ class VideoDanmuProvider: DanmuProviderProtocol {
         self.enableDanmuRemoveDup = enableDanmuRemoveDup
     }
 
-    func initVideo(cid id: Int, startPos: Int) async {
+    /// Point the provider at a video and clear the previous one's state.
+    ///
+    /// Split from the fetching half deliberately: this part is synchronous and
+    /// has to happen before the player can start, the fetching part does not.
+    /// See `loadInitialDanmu`.
+    func prepare(cid id: Int, startPos: Int) {
         cid = id
         upDanmus.removeAll()
         segmentDanmus.removeAll(keepingCapacity: true)
@@ -75,13 +82,25 @@ class VideoDanmuProvider: DanmuProviderProtocol {
         lastSegmentIdx = 0
         upDanmuIdx = 0
         danmuIdx = 0
+        startSegmentIdx = getSegmentIdx(time: TimeInterval(startPos))
+        segmentStatuses[startSegmentIdx] = true
+    }
 
+    /// Fetches the UP's pinned comments and the segment covering the start
+    /// position. Runs alongside playback rather than ahead of it — the danmaku
+    /// layer is driven by `playerTimeChange`, which simply shows nothing until
+    /// the segment it asks for is in hand.
+    func loadInitialDanmu() async {
+        guard cid != nil else { return }
         async let view: () = fetchDanmuView()
-        let segmentIdx = getSegmentIdx(time: TimeInterval(startPos))
-        segmentStatuses[segmentIdx] = true
-        async let list: () = fetchDanmuList(getSegmentIdx(time: TimeInterval(startPos)))
+        async let list: () = fetchDanmuList(startSegmentIdx)
         await view
         await list
+    }
+
+    func initVideo(cid id: Int, startPos: Int) async {
+        prepare(cid: id, startPos: startPos)
+        await loadInitialDanmu()
     }
 
     func fetchDanmuView() async {
@@ -97,7 +116,8 @@ class VideoDanmuProvider: DanmuProviderProtocol {
             .filter { $0.command == "#UP#" }
             .map { Danmu(upDm: $0) }
         dms.sort { $0.time < $1.time }
-        upDanmus = dms
+        // 过滤/排序留在后台，只有写回主线程——playerTimeChange 在主线程读。
+        await MainActor.run { upDanmus = dms }
 
         Logger.debug("[dm] cid:\(cid!) up danmu cnt: \(dms.count)")
     }
@@ -107,7 +127,7 @@ class VideoDanmuProvider: DanmuProviderProtocol {
         do {
             reply = try await WebRequest.requestDanmuList(cid: cid, segmentIdx: idx)
         } catch let err {
-            segmentStatuses[idx] = nil // 等待下次重试
+            await MainActor.run { segmentStatuses[idx] = nil } // 等待下次重试
             Logger.warn("[dm] cid:\(cid!) sidx:\(idx) requestDanmuList error: \(err)")
             return
         }
@@ -129,7 +149,8 @@ class VideoDanmuProvider: DanmuProviderProtocol {
         var models = dms
             .map { Danmu(dm: $0) }
         models.sort { $0.time < $1.time }
-        segmentDanmus[idx] = models
+        let sorted = models
+        await MainActor.run { segmentDanmus[idx] = sorted }
 
         Logger.debug("[dm] cid:\(cid!) sidx:\(idx) danmu cnt: \(dms.count)")
     }

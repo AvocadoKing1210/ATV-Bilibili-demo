@@ -8,16 +8,15 @@
 import AVKit
 
 class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
-    private let nextActionIdentifierPrefix = "play.next"
+    private let playNextActionIdentifierPrefix = "play.next"
     private weak var playerVC: AVPlayerViewController?
     var onPlayEnd: (() -> Void)?
     var onPlayNextWithInfo: ((PlayInfo) -> Void)?
-    var onShowCurrentDetail: ((PlayInfo) -> Void)?
 
-    let sequenceProvider: VideoSequenceProvider?
+    let nextProvider: VideoNextProvider?
 
-    init(sequenceProvider: VideoSequenceProvider?) {
-        self.sequenceProvider = sequenceProvider
+    init(nextProvider: VideoNextProvider?) {
+        self.nextProvider = nextProvider
     }
 
     func playerDidLoad(playerVC: AVPlayerViewController) {
@@ -25,29 +24,25 @@ class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func playerWillStart(player: AVPlayer) {
-        guard let playerVC, let sequenceProvider else { return }
-        let menuState = MainActor.assumeIsolated { () -> (PlayInfo?, PlayInfo?) in
-            guard sequenceProvider.count > 0 else { return (nil, nil) }
-            return (sequenceProvider.peekPrevious(), sequenceProvider.peekNext())
-        }
-        let next = menuState.1
-        var actions = playerVC.infoViewActions.filter {
-            !$0.identifier.rawValue.hasPrefix(nextActionIdentifierPrefix)
+        guard let playerVC, let nextProvider, nextProvider.count > 1 else { return }
+
+        // 仅当最后一项是我们之前添加的 "next" action 时才移除，避免误删其他自定义 action
+        if let last = playerVC.infoViewActions.last,
+           last.identifier.rawValue.hasPrefix(playNextActionIdentifierPrefix)
+        {
+            playerVC.infoViewActions.removeLast()
         }
 
-        if let next {
-            let nextAction = UIAction(title: "下一条",
+        if let next = nextProvider.peekNext() {
+            let title = next.title ?? "下一集"
+            let nextAction = UIAction(title: title,
                                       image: UIImage(systemName: "forward.end.fill"),
-                                      identifier: .init(rawValue: "\(nextActionIdentifierPrefix).\(next.sequenceKey)"))
+                                      identifier: .init(rawValue: "\(playNextActionIdentifierPrefix).\(next.aid).\(next.cid ?? 0)"))
             { [weak self] _ in
-                Task { [weak self] in
-                    _ = await self?.playNext()
-                }
+                _ = self?.playNext()
             }
-            actions.append(nextAction)
+            playerVC.infoViewActions.append(nextAction)
         }
-
-        playerVC.infoViewActions = actions
     }
 
     func addMenuItems(current: inout [UIMenuElement]) -> [UIMenuElement] {
@@ -57,57 +52,36 @@ class VideoPlayListPlugin: NSObject, CommonPlayerPlugin {
             action.state = (action.state == .off) ? .on : .off
             Settings.loopPlay = action.state == .on
         }
-        var actions = [UIMenuElement](arrayLiteral: loopAction)
-        let currentInfo = sequenceProvider.map { provider in
-            MainActor.assumeIsolated { provider.current() }
-        } ?? nil
-        if let currentInfo, let onShowCurrentDetail {
-            let detailAction = UIAction(title: "查看详情", image: UIImage(systemName: "info.circle")) { _ in
-                onShowCurrentDetail(currentInfo)
-            }
-            actions.append(detailAction)
-        }
-
         if let setting = current.compactMap({ $0 as? UIMenu })
             .first(where: { $0.identifier == UIMenu.Identifier(rawValue: "setting") })
         {
             var child = setting.children
-            child.append(contentsOf: actions)
+            child.append(loopAction)
             if let index = current.firstIndex(of: setting) {
                 current[index] = setting.replacingChildren(child)
             }
             return []
         }
-        return actions
+        return [loopAction]
     }
 
     func playerDidEnd(player: AVPlayer) {
-        Task { [weak self] in
-            guard let self else { return }
-            if !(await playNext()) {
-                if Settings.loopPlay {
-                    await MainActor.run {
-                        self.sequenceProvider?.reset()
-                    }
-                    if !(await playNext()) {
-                        player.currentItem?.seek(to: .zero, completionHandler: nil)
-                        player.play()
-                    }
-                    return
+        if !playNext() {
+            if Settings.loopPlay {
+                nextProvider?.reset()
+                if !playNext() {
+                    player.currentItem?.seek(to: .zero, completionHandler: nil)
+                    player.play()
                 }
-                await MainActor.run { [weak self] in
-                    self?.onPlayEnd?()
-                }
+                return
             }
+            onPlayEnd?()
         }
     }
 
-    @discardableResult
-    private func playNext() async -> Bool {
-        if let next = await sequenceProvider?.moveNext() {
-            await MainActor.run { [weak self] in
-                self?.onPlayNextWithInfo?(next)
-            }
+    private func playNext() -> Bool {
+        if let next = nextProvider?.getNext() {
+            onPlayNextWithInfo?(next)
             return true
         }
         return false

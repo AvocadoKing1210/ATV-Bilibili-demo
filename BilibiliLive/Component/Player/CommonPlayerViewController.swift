@@ -20,8 +20,28 @@ class CommonPlayerViewController: UIViewController {
     private var isRestoringFromPip = false
     /// 新 AVPlayerItem ready 后是否自动 play。换 CDN host 等场景可临时关掉，由调用方按用户暂停状态决定是否续播。
     var autoPlayWhenReady = true
-    var showsPlaybackControls = true
     var allowsPictureInPicturePlayback = true
+
+    /// 当前 AVPlayer，供容器（如 VideoTheaterViewController）观察播放进度。
+    var currentPlayer: AVPlayer? { playerVC.player }
+
+    /// 缩放到角落时由容器自己绘制迷你进度条，隐藏系统 transport。
+    var showsPlaybackControls: Bool {
+        get { playerVC.showsPlaybackControls }
+        set { playerVC.showsPlaybackControls = newValue }
+    }
+
+    /// PiP 结束后需要重新 present 播放器。当播放器被嵌入容器（作为 child VC）时，
+    /// 它自己不是被 present 的那个，必须由容器代为恢复，否则 UIKit 会报错。
+    weak var pipRestoreTarget: UIViewController?
+
+    /// player 实例在切换 CDN 线路/清晰度时会被替换，容器据此重新挂观察者。
+    var onPlayerChanged: ((AVPlayer) -> Void)?
+
+    /// 各插件通过 addMenuItems(current:) 贡献的菜单。自绘播放控件时系统 transport bar
+    /// 不再显示，容器需要拿到这份数据自行渲染，否则弹幕/倍速/画质/线路全部无法访问。
+    private(set) var currentMenuItems = [UIMenuElement]()
+    var onMenuItemsChanged: (([UIMenuElement]) -> Void)?
 
     deinit {
         cleanUpPlayerOnExit(force: true)
@@ -33,7 +53,6 @@ class CommonPlayerViewController: UIViewController {
         view.addSubview(playerVC.view)
         playerVC.didMove(toParent: self)
         playerVC.view.snp.makeConstraints { $0.edges.equalToSuperview() }
-        playerVC.showsPlaybackControls = showsPlaybackControls
         playerVC.allowsPictureInPicturePlayback = allowsPictureInPicturePlayback
         playerVC.delegate = self
 
@@ -56,6 +75,13 @@ class CommonPlayerViewController: UIViewController {
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
         return [playerVC.view]
+    }
+
+    /// Plugins are built by the view model, so a container that embeds this
+    /// player has no other handle on them — the theater needs one to keep the
+    /// danmaku layer in step with the picture when it docks.
+    func plugin<T: CommonPlayerPlugin>(ofType _: T.Type) -> T? {
+        activePlugins.compactMap { $0 as? T }.first
     }
 
     func addPlugin(plugin: CommonPlayerPlugin) {
@@ -89,6 +115,20 @@ class CommonPlayerViewController: UIViewController {
         activePlugins.removeAll()
     }
 
+    /// Stop and release playback now, unless it has been handed to PiP.
+    ///
+    /// For containers that embed this controller as a child: a child never sees
+    /// its own dismissal, and once the container has removed it from its view
+    /// hierarchy it may not get a `viewDidDisappear` at all — so the container
+    /// has to be the one to say playback is over. Leaving it to `deinit` means
+    /// an AVPlayer, its decoder and its buffers linger for as long as anything
+    /// still references the controller.
+    func tearDownPlayback() {
+        let isPictureInPictureRunning = PipRecorder.shared.playingPipViewController.contains { $0.playerVC == playerVC }
+        guard !isPictureInPictureRunning else { return }
+        cleanUpPlayerOnExit(force: true)
+    }
+
     func playerWillStart(player: AVPlayer) {}
     func playerDidStart(player: AVPlayer) {}
     func playerDidEnd(player: AVPlayer) {}
@@ -112,6 +152,8 @@ class CommonPlayerViewController: UIViewController {
             menus.append(contentsOf: newMenus)
         }
         playerVC.transportBarCustomMenuItems = menus
+        currentMenuItems = menus
+        onMenuItemsChanged?(menus)
     }
 
     func stopPlayback() {
@@ -130,7 +172,16 @@ class CommonPlayerViewController: UIViewController {
 
     private func cleanUpPlayerOnExit(force: Bool = false) {
         let isPictureInPictureRunning = PipRecorder.shared.playingPipViewController.contains { $0.playerVC == playerVC }
-        let shouldCleanUp = force || ((isBeingDismissed || isMovingFromParent || navigationController?.isBeingDismissed == true) && !isPictureInPictureRunning)
+        // `parent?.isBeingDismissed` covers the embedded case. Inside the
+        // theater this controller is a child, so it is never itself "being
+        // dismissed" — the container is. Without this the whole rig (AVPlayer,
+        // decoder, buffers, the plugins' timers and observers) survived the
+        // screen and was only reclaimed if and when deinit happened to run.
+        let leaving = isBeingDismissed
+            || isMovingFromParent
+            || parent?.isBeingDismissed == true
+            || navigationController?.isBeingDismissed == true
+        let shouldCleanUp = force || (leaving && !isPictureInPictureRunning)
         guard shouldCleanUp else { return }
 
         cleanUpObserver()
@@ -162,6 +213,7 @@ extension CommonPlayerViewController {
     private func playerDidChange(player: AVPlayer?) {
         if let player {
             activePlugins.forEach { $0.playerDidChange(player: player) }
+            onPlayerChanged?(player)
             rateObserver = player.observe(\.rate, options: [.old, .new]) {
                 [weak self] _player, obs in
                 DispatchQueue.main.async { [weak self] in
@@ -265,14 +317,16 @@ extension CommonPlayerViewController: AVPlayerViewControllerDelegate {
             completionHandler(false)
             return
         }
+        // 嵌入容器时播放器本身是 child VC，不能被 present，改为恢复容器。
+        let restoreTarget = containerPlayer.pipRestoreTarget ?? containerPlayer
         if presentedViewController is CommonPlayerViewController {
             let parent = presentedViewController.presentingViewController
             presentedViewController.dismiss(animated: false) {
-                parent?.present(containerPlayer, animated: false)
+                parent?.present(restoreTarget, animated: false)
                 completionHandler(true)
             }
         } else {
-            presentedViewController.present(containerPlayer, animated: false) {
+            presentedViewController.present(restoreTarget, animated: false) {
                 completionHandler(true)
             }
         }

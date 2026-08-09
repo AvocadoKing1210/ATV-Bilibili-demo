@@ -36,6 +36,11 @@ class DanmuViewPlugin: NSObject {
     }
 
     private let danmuProvider: DanmuProviderProtocol
+    /// The two layouts the danmaku layer can be in — filling its container, or
+    /// held at full-bleed size and scaled into a docked one. See
+    /// `setPresentationScale`.
+    fileprivate var fillConstraints: [NSLayoutConstraint] = []
+    fileprivate var scaledConstraints: [NSLayoutConstraint] = []
     private var timeObserver: Any?
     private weak var currentPlayer: AVPlayer? // 保存当前 player 的弱引用
     private var cancellable = Set<AnyCancellable>()
@@ -82,9 +87,11 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
         // 保存新的 player 引用
         currentPlayer = player
 
-        // 添加新的 observer 并保存引用
+        // 主队列：provider 的分段缓存现在是边播边灌的（起播不再等弹幕下载完），
+        // 读在这个回调里、写在下载完成时，两边都放主线程才不会撕裂。回调本身
+        // 1 秒一次且只做游标推进，主线程开销可以忽略。
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 1),
-                                                      queue: DispatchQueue.global())
+                                                      queue: .main)
         { [weak self] time in
             guard let self else { return }
             if !Defaults.shared.showDanmu { return }
@@ -103,13 +110,55 @@ extension DanmuViewPlugin: CommonPlayerPlugin {
 
     func addViewToPlayerOverlay(container: UIView) {
         container.addSubview(danMuView)
-        danMuView.makeConstraintsToBindToSuperview()
+        danMuView.translatesAutoresizingMaskIntoConstraints = false
+        fillConstraints = [
+            danMuView.leftAnchor.constraint(equalTo: container.leftAnchor),
+            danMuView.rightAnchor.constraint(equalTo: container.rightAnchor),
+            danMuView.topAnchor.constraint(equalTo: container.topAnchor),
+            danMuView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ]
+        // Full-bleed geometry, held whatever the picture is doing — see
+        // setPresentationScale.
+        let screen = UIScreen.main.bounds.size
+        scaledConstraints = [
+            danMuView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            danMuView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            danMuView.widthAnchor.constraint(equalToConstant: screen.width),
+            danMuView.heightAnchor.constraint(equalToConstant: screen.height),
+        ]
+        NSLayoutConstraint.activate(fillConstraints)
         danMuView.setNeedsLayout()
         danMuView.layoutIfNeeded()
         danMuView.paddingTop = 5
         danMuView.trackHeight = 50
         danMuView.displayArea = Settings.danmuArea.percent
         danMuView.recaculateTracks()
+    }
+
+    /// Scales the whole danmaku layer so it tracks the picture when the player
+    /// docks into the corner.
+    ///
+    /// The layer keeps its full-bleed geometry and is *scaled* into place rather
+    /// than re-laid out at the smaller size. Two reasons: danmaku already in
+    /// flight carry the size and track they were measured at, so re-measuring
+    /// would move only the new ones and the two sets would visibly disagree;
+    /// and the text is authored for a full screen, so shrinking the box while
+    /// keeping 36pt type is what made the docked picture unreadable.
+    ///
+    /// Safe to call repeatedly — plugins are rebuilt when the media loads, so
+    /// the container re-applies the current scale each time.
+    func setPresentationScale(_ scale: CGFloat) {
+        guard danMuView.superview != nil, !fillConstraints.isEmpty else { return }
+        if scale == 1 {
+            NSLayoutConstraint.deactivate(scaledConstraints)
+            NSLayoutConstraint.activate(fillConstraints)
+            danMuView.transform = .identity
+        } else {
+            NSLayoutConstraint.deactivate(fillConstraints)
+            NSLayoutConstraint.activate(scaledConstraints)
+            danMuView.transform = CGAffineTransform(scaleX: scale, y: scale)
+        }
+        danMuView.superview?.layoutIfNeeded()
     }
 
     func playerDidStart(player: AVPlayer) {
