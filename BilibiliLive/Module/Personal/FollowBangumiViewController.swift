@@ -32,7 +32,6 @@ class BangumiListViewController: StandardVideoCollectionViewController<FollowBan
 
     override func setupCollectionView() {
         super.setupCollectionView()
-        collectionVC.styleOverride = .normal
         collectionVC.pageSize = 24
         collectionVC.loadViewIfNeeded()
         collectionVC.collectionView.contentInset = UIEdgeInsets(top: 40, left: 0, bottom: 40, right: 0)
@@ -44,8 +43,7 @@ class BangumiListViewController: StandardVideoCollectionViewController<FollowBan
     }
 
     override func goDetail(with record: FollowBangumiListData.Bangumi) {
-        let detailVC = VideoDetailViewController.create(seasonId: record.season_id)
-        detailVC.present(from: self)
+        VideoPlaybackPresenter.present(seasonId: record.season_id, title: record.title, from: self)
     }
 }
 

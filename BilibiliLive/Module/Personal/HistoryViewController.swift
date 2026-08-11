@@ -21,8 +21,7 @@ class HistoryViewController: UIViewController {
     }
 
     func goDetail(with history: HistoryData) {
-        let detailVC = VideoDetailViewController.create(aid: history.aid, cid: history.cid ?? 0)
-        detailVC.present(from: self)
+        VideoPlaybackPresenter.present(aid: history.aid, cid: history.cid ?? 0, title: history.title, from: self)
     }
 
     override func viewWillAppear(_ animated: Bool) {

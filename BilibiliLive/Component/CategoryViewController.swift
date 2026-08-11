@@ -15,42 +15,55 @@ class CategoryViewController: UIViewController, BLTabBarContentVCProtocol {
         var autoSelect: Bool? = true
     }
 
-    var typeCollectionView: UICollectionView!
     var categories = [CategoryDisplayModel]()
     let contentView = UIView()
     weak var currentViewController: UIViewController?
 
+    /// Categories used to be a 500pt left sidebar. Under the global rail that
+    /// produced two stacked navigation columns and squeezed the content off
+    /// the right edge, so they are a chip row now — same grammar as the index
+    /// page, and it shares the rail's top baseline.
+    private let chipBar = ChipBarView()
+    private var didBuildChips = false
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        if categories.isEmpty {
-        } else {
+        view.backgroundColor = DS.Color.bg
+        if !categories.isEmpty {
             initTypeCollectionView()
         }
     }
 
     func initTypeCollectionView() {
-        if typeCollectionView != nil {
-            return
-        }
-        typeCollectionView = UICollectionView(frame: .zero, collectionViewLayout: BLSettingLineCollectionViewCell.makeLayout())
-        typeCollectionView.register(BLSettingLineCollectionViewCell.self, forCellWithReuseIdentifier: "cell")
-        view.addSubview(typeCollectionView)
-        typeCollectionView.snp.makeConstraints { make in
-            make.leading.bottom.equalToSuperview()
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top)
-            make.width.equalTo(500)
-        }
-        typeCollectionView.dataSource = self
-        typeCollectionView.delegate = self
+        if didBuildChips { return }
+        didBuildChips = true
 
         view.addSubview(contentView)
-        contentView.snp.makeConstraints { make in
-            make.bottom.right.equalToSuperview()
+        view.addSubview(chipBar)
+        chipBar.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
             make.top.equalTo(view.safeAreaLayoutGuide.snp.top)
-            make.left.equalTo(typeCollectionView.snp.right)
+            make.height.equalTo(DS.Chip.barHeight)
         }
-        typeCollectionView.selectItem(at: IndexPath(item: 0, section: 0), animated: false, scrollPosition: .top)
-        collectionView(typeCollectionView, didSelectItemAt: IndexPath(item: 0, section: 0))
+        contentView.snp.makeConstraints { make in
+            make.leading.trailing.bottom.equalToSuperview()
+            make.top.equalTo(chipBar.snp.bottom)
+        }
+
+        chipBar.setTitles(categories.map(\.title))
+        chipBar.onSelect = { [weak self] index in self?.selectCategory(index) }
+        chipBar.onFocusChange = { [weak self] index in
+            guard let self, Settings.sideMenuAutoSelectChange else { return }
+            guard categories[safe: index]?.autoSelect != false else { return }
+            chipBar.setActive(index)
+            selectCategory(index)
+        }
+        selectCategory(0)
+    }
+
+    private func selectCategory(_ index: Int) {
+        guard let model = categories[safe: index] else { return }
+        setViewController(vc: model.contentVC)
     }
 
     func setViewController(vc: UIViewController) {
@@ -69,36 +82,8 @@ class CategoryViewController: UIViewController, BLTabBarContentVCProtocol {
     }
 }
 
-extension CategoryViewController: UICollectionViewDataSource {
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return categories.count
-    }
-
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "cell", for: indexPath) as! BLSettingLineCollectionViewCell
-        cell.titleLabel.text = categories[indexPath.item].title
-        return cell
-    }
-}
-
-extension CategoryViewController: UICollectionViewDelegate {
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        setViewController(vc: categories[indexPath.item].contentVC)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
-        if Settings.sideMenuAutoSelectChange == false {
-            return
-        }
-        guard let nextFocusedIndexPath = context.nextFocusedIndexPath else {
-            return
-        }
-        let categoryModel = categories[nextFocusedIndexPath.item]
-        if categoryModel.autoSelect == false {
-            // 不自动选中
-            return
-        }
-        collectionView.selectItem(at: nextFocusedIndexPath, animated: true, scrollPosition: .centeredHorizontally)
-        setViewController(vc: categoryModel.contentVC)
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

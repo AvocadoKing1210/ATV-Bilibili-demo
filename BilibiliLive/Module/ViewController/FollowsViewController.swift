@@ -6,244 +6,254 @@
 //
 
 import Alamofire
-import SnapKit
+import Kingfisher
 import SwiftyJSON
 import UIKit
 
-final class FollowsViewController: UIViewController, BLTabBarContentVCProtocol {
-    private enum LayoutMode {
-        case feedFlow
-        case grid
-    }
-
-    private var currentMode: LayoutMode?
-    private var currentContentViewController: UIViewController?
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(handleLayoutModeDidChange),
-                                               name: .followsLayoutModeDidChange,
-                                               object: nil)
-        syncLayoutIfNeeded(force: true)
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        syncLayoutIfNeeded(force: false)
-    }
-
-    override var preferredFocusEnvironments: [UIFocusEnvironment] {
-        currentContentViewController?.preferredFocusEnvironments ?? [view]
-    }
-
-    func reloadData() {
-        if let content = currentContentViewController as? BLTabBarContentVCProtocol {
-            content.reloadData()
-        } else {
-            syncLayoutIfNeeded(force: true)
-        }
-    }
-
-    @objc private func handleLayoutModeDidChange() {
-        guard isViewLoaded else { return }
-        syncLayoutIfNeeded(force: true)
-    }
-
-    private func syncLayoutIfNeeded(force: Bool) {
-        let targetMode: LayoutMode = Settings.followsFeedFlowEnabled ? .feedFlow : .grid
-        guard force || currentMode != targetMode else { return }
-
-        let targetViewController: UIViewController
-        switch targetMode {
-        case .feedFlow:
-            targetViewController = FollowsFeedFlowViewController()
-        case .grid:
-            targetViewController = FollowsGridViewController()
-        }
-
-        transition(to: targetViewController)
-        currentMode = targetMode
-    }
-
-    private func transition(to targetViewController: UIViewController) {
-        let previousViewController = currentContentViewController
-        addChild(targetViewController)
-        view.addSubview(targetViewController.view)
-        targetViewController.view.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-        targetViewController.didMove(toParent: self)
-        currentContentViewController = targetViewController
-
-        guard let previousViewController else { return }
-        previousViewController.willMove(toParent: nil)
-        previousViewController.view.removeFromSuperview()
-        previousViewController.removeFromParent()
-    }
-}
-
-final class FollowsGridViewController: StandardVideoCollectionViewController<DynamicFeedData> {
+class FollowsViewController: StandardVideoCollectionViewController<DynamicFeedData> {
     var lastOffset = ""
-    private var nextSourcePage = 1
+
+    /// 顶部关注 UP 主头像栏。index 0 固定为「全部」。
+    private var upList = [WebRequest.FollowedUp]()
+    /// nil = 全部关注动态；非 nil = 只看该 UP 主
+    private var selectedMid: Int?
+    private var railView: UICollectionView!
 
     override func setupCollectionView() {
         super.setupCollectionView()
         collectionVC.pageSize = 1
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupRail()
+        setupRefreshGesture()
+        Task { await loadUpList() }
+    }
+
     override func request(page: Int) async throws -> [DynamicFeedData] {
         if page == 1 {
             lastOffset = ""
-            nextSourcePage = 1
         }
-
-        for _ in 0..<6 {
-            try Task.checkCancellation()
-            let requestedOffset = lastOffset
-            let info = try await WebRequest.requestFollowsFeed(offset: requestedOffset, page: nextSourcePage)
-            try Task.checkCancellation()
-            nextSourcePage += 1
-            lastOffset = info.offset
-            Logger.debug("request page\(nextSourcePage - 1) get count:\(info.videoFeeds.count) next offset:\(info.offset)")
-            if !info.videoFeeds.isEmpty || !info.has_more || info.offset == requestedOffset {
-                return info.videoFeeds
-            }
+        let info: WebRequest.DynamicFeedInfo
+        if let mid = selectedMid {
+            info = try await WebRequest.requestUpSpaceFeed(mid: mid, offset: lastOffset)
+        } else {
+            info = try await WebRequest.requestFollowsFeed(offset: lastOffset, page: page)
         }
-        return []
+        lastOffset = info.offset
+        Logger.debug("request page\(page) mid:\(selectedMid ?? 0) count:\(info.videoFeeds.count) next offset:\(info.offset)")
+        return info.videoFeeds
     }
 
     override func goDetail(with feed: DynamicFeedData) {
         let epid = feed.modules.module_dynamic.major?.pgc?.epid
-        let detailVC = VideoDetailViewController.create(aid: feed.aid, cid: feed.cid, epid: epid)
-        detailVC.present(from: self)
+        VideoPlaybackPresenter.present(aid: feed.aid, cid: feed.cid, epid: epid, title: feed.title, from: self)
+    }
+
+    // MARK: - Up rail
+
+    private func setupRail() {
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.itemSize = CGSize(width: UpRailCell.itemWidth, height: 168)
+        // Horizontal flow: the gap between two avatars is the *line* spacing,
+        // not the interitem one — that was the old 12 that never took effect.
+        // The cell already carries half a gutter on each side, exactly like a
+        // card, so zero here leaves one full gutter between avatars.
+        layout.minimumLineSpacing = 0
+        layout.minimumInteritemSpacing = 0
+        // Rail and grid are two scroll views on one page, so both pick up the
+        // same safe-area lead; matching the grid's own section inset is all
+        // that is needed to put 「全部」 on the first card's left edge.
+        layout.sectionInset = UIEdgeInsets(
+            top: 0,
+            left: collectionVC.cardLeadingInset - DS.Space.gutter / 2,
+            bottom: 0,
+            right: DS.Space.gutter / 2
+        )
+
+        railView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        railView.register(UpRailCell.self, forCellWithReuseIdentifier: UpRailCell.reuseID)
+        railView.dataSource = self
+        railView.delegate = self
+        railView.backgroundColor = .clear
+        railView.remembersLastFocusedIndexPath = true
+        view.addSubview(railView)
+
+        // StandardVideoCollectionViewController 已把 feed 绑到四边，
+        // 解开顶边，把头像栏插进去。
+        let feedView = collectionVC.view!
+        railView.translatesAutoresizingMaskIntoConstraints = false
+        for c in view.constraints where c.firstItem === feedView && c.firstAttribute == .top {
+            c.isActive = false
+        }
+        NSLayoutConstraint.activate([
+            railView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            railView.leftAnchor.constraint(equalTo: view.leftAnchor),
+            railView.rightAnchor.constraint(equalTo: view.rightAnchor),
+            railView.heightAnchor.constraint(equalToConstant: 190),
+            feedView.topAnchor.constraint(equalTo: railView.bottomAnchor),
+        ])
+    }
+
+    private func loadUpList() async {
+        if let ups = try? await WebRequest.requestFollowedUpPortal(), !ups.isEmpty {
+            upList = ups
+        } else if let ups = try? await WebRequest.requestFollowing(page: 1) {
+            // portal 接口失败时退回关注列表（按关注时间排序，无更新标记）
+            upList = ups.map { WebRequest.FollowedUp(mid: $0.mid, uname: $0.uname, face: $0.face, has_update: false) }
+        }
+        railView.reloadData()
+    }
+
+    // MARK: - Refresh
+
+    private func setupRefreshGesture() {
+        // 遥控器播放/暂停键 = 刷新当前列表
+        let tap = UITapGestureRecognizer(target: self, action: #selector(refresh))
+        tap.allowedPressTypes = [NSNumber(value: UIPress.PressType.playPause.rawValue)]
+        view.addGestureRecognizer(tap)
+    }
+
+    @objc private func refresh() {
+        reloadData()
+        Task { await loadUpList() }
     }
 }
 
-final class FollowsFeedFlowViewController: FeedFlowBrowserViewController {
-    init() {
-        super.init(dataSource: FollowsFeedFlowDataSource())
+// MARK: - Rail data source / delegate
+
+extension FollowsViewController: UICollectionViewDataSource, UICollectionViewDelegate {
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return upList.isEmpty ? 0 : upList.count + 1
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: UpRailCell.reuseID, for: indexPath) as! UpRailCell
+        if indexPath.item == 0 {
+            cell.configureAsAll(selected: selectedMid == nil)
+        } else {
+            let up = upList[indexPath.item - 1]
+            cell.configure(with: up, selected: selectedMid == up.mid)
+        }
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let newMid: Int? = indexPath.item == 0 ? nil : upList[indexPath.item - 1].mid
+        if newMid != selectedMid {
+            selectedMid = newMid
+        }
+        // 再次选中当前项时等同于刷新
+        reloadData()
+        railView.reloadData()
+    }
+}
+
+// MARK: - Rail cell
+
+private class UpRailCell: UICollectionViewCell {
+    static let reuseID = "UpRailCell"
+
+    static let avatarSize: CGFloat = 96
+    /// The avatar plus half a gutter on each side, which is exactly how a card
+    /// is built — so a row of avatars is spaced like a row of cards and its
+    /// first item starts on the same column edge.
+    static let itemWidth = avatarSize + DS.Space.gutter
+    /// Names may run a little past the avatar, but not far enough to close up
+    /// against the next one.
+    private static let labelInset: CGFloat = 8
+
+    private let avatarView = UIImageView()
+    private let nameLabel = UILabel()
+    private let updateDot = UIView()
+    private var isFilterSelected = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.clipsToBounds = true
+        avatarView.layer.cornerRadius = Self.avatarSize / 2
+        avatarView.layer.borderWidth = 4
+        avatarView.layer.borderColor = UIColor.clear.cgColor
+        avatarView.backgroundColor = UIColor.white.withAlphaComponent(0.15)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+
+        nameLabel.font = .systemFont(ofSize: 24)
+        nameLabel.textColor = .secondaryLabel
+        nameLabel.textAlignment = .center
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        updateDot.backgroundColor = UIColor(red: 0.98, green: 0.45, blue: 0.60, alpha: 1) // B站粉
+        updateDot.layer.cornerRadius = 9
+        updateDot.isHidden = true
+        updateDot.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(avatarView)
+        contentView.addSubview(nameLabel)
+        contentView.addSubview(updateDot)
+        NSLayoutConstraint.activate([
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            avatarView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: Self.avatarSize),
+            avatarView.heightAnchor.constraint(equalToConstant: Self.avatarSize),
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 10),
+            nameLabel.leftAnchor.constraint(equalTo: contentView.leftAnchor, constant: Self.labelInset),
+            nameLabel.rightAnchor.constraint(equalTo: contentView.rightAnchor, constant: -Self.labelInset),
+            updateDot.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 2),
+            updateDot.rightAnchor.constraint(equalTo: avatarView.rightAnchor, constant: -2),
+            updateDot.widthAnchor.constraint(equalToConstant: 18),
+            updateDot.heightAnchor.constraint(equalToConstant: 18),
+        ])
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(with up: WebRequest.FollowedUp, selected: Bool) {
+        nameLabel.text = up.uname
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.kf.setImage(with: up.face, options: [.processor(DownsamplingImageProcessor(size: CGSize(width: Self.avatarSize, height: Self.avatarSize)))])
+        updateDot.isHidden = !up.has_update
+        isFilterSelected = selected
+        applyStyle(focused: isFocused)
+    }
+
+    func configureAsAll(selected: Bool) {
+        nameLabel.text = "全部"
+        avatarView.kf.cancelDownloadTask()
+        avatarView.image = UIImage(systemName: "person.2.fill")?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 40))
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        avatarView.contentMode = .center
+        updateDot.isHidden = true
+        isFilterSelected = selected
+        applyStyle(focused: isFocused)
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        coordinator.addCoordinatedAnimations({
+            self.applyStyle(focused: self.isFocused)
+        })
+    }
+
+    private func applyStyle(focused: Bool) {
+        transform = focused ? CGAffineTransform(scaleX: 1.12, y: 1.12) : .identity
+        if focused {
+            avatarView.layer.borderColor = UIColor.white.cgColor
+        } else if isFilterSelected {
+            avatarView.layer.borderColor = UIColor(red: 0.98, green: 0.45, blue: 0.60, alpha: 1).cgColor
+        } else {
+            avatarView.layer.borderColor = UIColor.clear.cgColor
+        }
+        nameLabel.textColor = focused || isFilterSelected ? .label : .secondaryLabel
     }
 }
 
-final class FollowsFeedFlowDataSource: FeedFlowDataSource {
-    let title = "关注"
-    let defaultPreviewHintText = "停留后自动预览，按确认键进入视频流"
-    let loadingHintText = "正在加载关注视频..."
-    let emptyStateText = "当前关注区暂无可播放视频"
-    let emptyHintText = "可以在设置中关闭关注刷视频模式"
-    let loadFailureText = "关注加载失败，请稍后重试"
-    let autoReloadInterval: TimeInterval? = 60 * 60
-
-    var reloadToken: String {
-        "\(ApiRequest.getToken()?.mid ?? 0)"
-    }
-
-    private var lastOffset = ""
-    private var nextPage = 1
-    private var hasMore = true
-    private var seenItemKeys = Set<String>()
-
-    private struct LoadResult {
-        let items: [FeedFlowItem]
-        let lastOffset: String
-        let nextPage: Int
-        let hasMore: Bool
-        let seenItemKeys: Set<String>
-    }
-
-    func reset() {
-        lastOffset = ""
-        nextPage = 1
-        hasMore = true
-        seenItemKeys = []
-    }
-
-    func refreshFromStart(targetCount: Int, maxSourcePages: Int) async throws -> [FeedFlowItem] {
-        let result = try await loadMoreUntilTarget(targetCount: targetCount,
-                                                   maxSourcePages: maxSourcePages,
-                                                   startingOffset: "",
-                                                   startingPage: 1,
-                                                   startingHasMore: true,
-                                                   seenItemKeys: [])
-        commit(result)
-        return result.items
-    }
-
-    func loadMoreItems(targetCount: Int, maxSourcePages: Int) async throws -> [FeedFlowItem] {
-        let result = try await loadMoreUntilTarget(targetCount: targetCount,
-                                                   maxSourcePages: maxSourcePages,
-                                                   startingOffset: lastOffset,
-                                                   startingPage: nextPage,
-                                                   startingHasMore: hasMore,
-                                                   seenItemKeys: seenItemKeys)
-        commit(result)
-        return result.items
-    }
-
-    private func loadMoreUntilTarget(targetCount: Int,
-                                     maxSourcePages: Int,
-                                     startingOffset: String,
-                                     startingPage: Int,
-                                     startingHasMore: Bool,
-                                     seenItemKeys: Set<String>) async throws -> LoadResult
-    {
-        guard startingHasMore else {
-            return LoadResult(items: [],
-                              lastOffset: startingOffset,
-                              nextPage: startingPage,
-                              hasMore: false,
-                              seenItemKeys: seenItemKeys)
-        }
-
-        var pagesScanned = 0
-        var accepted = [FeedFlowItem]()
-        var resolvedOffset = startingOffset
-        var resolvedPage = startingPage
-        var resolvedHasMore = startingHasMore
-        var resolvedSeenItemKeys = seenItemKeys
-
-        while accepted.count < targetCount, pagesScanned < maxSourcePages, resolvedHasMore {
-            try Task.checkCancellation()
-            let requestedOffset = resolvedOffset
-            let info = try await WebRequest.requestFollowsFeed(offset: resolvedOffset, page: resolvedPage)
-            try Task.checkCancellation()
-            pagesScanned += 1
-            resolvedPage += 1
-            resolvedOffset = info.offset
-            resolvedHasMore = info.has_more && info.offset != requestedOffset
-
-            let newItems = info.videoFeeds
-                .compactMap(\.feedFlowItem)
-                .filter { resolvedSeenItemKeys.insert($0.identityKey).inserted }
-            accepted.append(contentsOf: newItems)
-        }
-
-        try Task.checkCancellation()
-        return LoadResult(items: accepted,
-                          lastOffset: resolvedOffset,
-                          nextPage: resolvedPage,
-                          hasMore: resolvedHasMore,
-                          seenItemKeys: resolvedSeenItemKeys)
-    }
-
-    private func commit(_ result: LoadResult) {
-        lastOffset = result.lastOffset
-        nextPage = result.nextPage
-        hasMore = result.hasMore
-        seenItemKeys = result.seenItemKeys
-    }
-}
+// MARK: - API
 
 extension WebRequest {
     struct DynamicFeedInfo: Codable {
@@ -252,9 +262,9 @@ extension WebRequest {
         let update_num: Int
         let update_baseline: String
         let has_more: Bool
-
         var videoFeeds: [DynamicFeedData] {
-            items.filter { $0.aid != 0 || $0.modules.module_dynamic.major?.pgc?.epid != nil }
+            return items
+                .filter({ $0.aid != 0 || $0.modules.module_dynamic.major?.pgc != nil })
         }
 
         enum CodingKeys: String, CodingKey {
@@ -264,7 +274,8 @@ extension WebRequest {
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             items = try container.decode([DynamicFeedData].self, forKey: .items)
-            offset = try container.decode(String.self, forKey: .offset)
+            // feed/space 不返回 update_num / update_baseline，全部宽松解码
+            offset = (try? container.decode(String.self, forKey: .offset)) ?? ""
             if let intVal = try? container.decode(Int.self, forKey: .update_num) {
                 update_num = intVal
             } else if let strVal = try? container.decode(String.self, forKey: .update_num) {
@@ -272,20 +283,75 @@ extension WebRequest {
             } else {
                 update_num = 0
             }
-            update_baseline = try container.decode(String.self, forKey: .update_baseline)
-            has_more = try container.decode(Bool.self, forKey: .has_more)
+            update_baseline = (try? container.decode(String.self, forKey: .update_baseline)) ?? ""
+            has_more = (try? container.decode(Bool.self, forKey: .has_more)) ?? false
         }
     }
 
-    static func requestFollowsFeed(offset: String, page: Int) async throws -> DynamicFeedInfo {
-        var parameters: [String: Any] = ["type": "all", "timezone_offset": "-480", "page": page]
-        if let offset = Int(offset) {
-            parameters["offset"] = offset
+    struct FollowedUp: Codable, Hashable {
+        let mid: Int
+        let uname: String
+        let face: URL?
+        let has_update: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case mid, uname, face, has_update
         }
-        return try await request(
-            url: "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all",
-            parameters: parameters
-        )
+
+        init(mid: Int, uname: String, face: URL?, has_update: Bool) {
+            self.mid = mid
+            self.uname = uname
+            self.face = face
+            self.has_update = has_update
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            mid = try container.decode(Int.self, forKey: .mid)
+            uname = try container.decode(String.self, forKey: .uname)
+            face = try? container.decode(URL.self, forKey: .face)
+            if let boolVal = try? container.decode(Bool.self, forKey: .has_update) {
+                has_update = boolVal
+            } else if let intVal = try? container.decode(Int.self, forKey: .has_update) {
+                has_update = intVal != 0
+            } else {
+                has_update = false
+            }
+        }
+    }
+
+    /// 最近有更新的关注 UP 主列表（对应手机端动态页顶部头像栏）
+    static func requestFollowedUpPortal() async throws -> [FollowedUp] {
+        struct Resp: Codable {
+            let up_list: [FollowedUp]
+        }
+        let resp: Resp = try await request(url: "https://api.bilibili.com/x/polymer/web-dynamic/v1/portal")
+        return resp.up_list
+    }
+
+    /// 单个 UP 主的动态视频流（feed/space），响应结构与 feed/all 相同
+    static func requestUpSpaceFeed(mid: Int, offset: String) async throws -> DynamicFeedInfo {
+        var param: [String: Any] = ["host_mid": mid, "timezone_offset": "-480"]
+        if !offset.isEmpty {
+            param["offset"] = offset
+        }
+        let res: DynamicFeedInfo = try await request(url: "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space", parameters: param)
+        if res.videoFeeds.isEmpty, res.has_more, !res.offset.isEmpty {
+            return try await requestUpSpaceFeed(mid: mid, offset: res.offset)
+        }
+        return res
+    }
+
+    static func requestFollowsFeed(offset: String, page: Int) async throws -> DynamicFeedInfo {
+        var param: [String: Any] = ["type": "all", "timezone_offset": "-480", "page": page]
+        if let offsetNum = Int(offset) {
+            param["offset"] = offsetNum
+        }
+        let res: DynamicFeedInfo = try await request(url: "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all", parameters: param)
+        if res.videoFeeds.isEmpty, res.has_more {
+            return try await requestFollowsFeed(offset: res.offset, page: page)
+        }
+        return res
     }
 }
 
@@ -297,26 +363,26 @@ struct DynamicFeedData: Codable, PlayableData, DisplayData {
         return 0
     }
 
-    var cid: Int { 0 }
+    var cid: Int { return 0 }
 
     var title: String {
-        modules.module_dynamic.major?.archive?.title ?? modules.module_dynamic.major?.pgc?.title ?? ""
+        return modules.module_dynamic.major?.archive?.title ?? modules.module_dynamic.major?.pgc?.title ?? ""
     }
 
     var ownerName: String {
-        modules.module_author.name
+        return modules.module_author.name
     }
 
     var pic: URL? {
-        URL(string: modules.module_dynamic.major?.archive?.cover ?? "") ?? modules.module_dynamic.major?.pgc?.cover
+        return URL(string: modules.module_dynamic.major?.archive?.cover ?? "") ?? modules.module_dynamic.major?.pgc?.cover
     }
 
     var avatar: URL? {
-        URL(string: modules.module_author.face)
+        return URL(string: modules.module_author.face)
     }
 
     var date: String? {
-        modules.module_author.pub_time
+        return modules.module_author.pub_time
     }
 
     var overlay: DisplayOverlay? {
@@ -334,33 +400,6 @@ struct DynamicFeedData: Codable, PlayableData, DisplayData {
             rightItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: durationText))
         }
         return DisplayOverlay(leftItems: leftItems, rightItems: rightItems)
-    }
-
-    var feedFlowItem: FeedFlowItem? {
-        if aid > 0 {
-            return FeedFlowItem(aid: aid,
-                                title: title,
-                                ownerName: ownerName,
-                                coverURL: pic,
-                                avatarURL: avatar,
-                                durationText: modules.module_dynamic.major?.archive?.duration_text ?? "",
-                                viewCountText: modules.module_dynamic.major?.archive?.stat?.play ?? "",
-                                danmakuCountText: modules.module_dynamic.major?.archive?.stat?.danmaku ?? "",
-                                reasonText: date)
-        }
-
-        if let epid = modules.module_dynamic.major?.pgc?.epid, epid > 0 {
-            return FeedFlowItem(aid: 0,
-                                epid: epid,
-                                title: title,
-                                ownerName: ownerName,
-                                coverURL: pic,
-                                avatarURL: avatar,
-                                durationText: "",
-                                reasonText: date)
-        }
-
-        return nil
     }
 
     let type: String

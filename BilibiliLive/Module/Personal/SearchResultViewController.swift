@@ -162,8 +162,9 @@ extension SearchResultViewController {
     }
 
     private func configureDataSource() {
-        let displayCell = UICollectionView.CellRegistration<FeedCollectionViewCell, any DisplayData> {
-            $0.setup(data: $2)
+        // Search results use the same card as the index page and the feeds.
+        let displayCell = UICollectionView.CellRegistration<HomeCardCell, any DisplayData> {
+            $0.configure(with: $2)
         }
         let userCell = UICollectionView.CellRegistration<UpCell, SearchResult.User> {
             $0.nameLabel.text = $2.uname
@@ -207,11 +208,9 @@ extension SearchResultViewController: UICollectionViewDelegate {
         guard let data = dataSource.itemIdentifier(for: indexPath) else { return }
         switch data {
         case let .video(data):
-            let detailVC = VideoDetailViewController.create(aid: data.aid, cid: 0)
-            detailVC.present(from: self)
+            VideoPlaybackPresenter.present(aid: data.aid, cid: 0, title: data.title, from: self)
         case let .bangumi(data):
-            let detailVC = VideoDetailViewController.create(seasonId: data.season_id)
-            detailVC.present(from: self)
+            VideoPlaybackPresenter.present(seasonId: data.season_id, title: data.title, from: self)
         case let .user(data):
             let upSpaceVC = UpSpaceViewController()
             upSpaceVC.mid = data.mid

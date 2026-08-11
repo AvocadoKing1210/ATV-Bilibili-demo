@@ -35,6 +35,10 @@ class MyLiveViewController: StandardVideoCollectionViewController<LiveRoom> {
         collectionVC.styleOverride = .sideBar
         collectionVC.pageSize = 10
         reloadInterval = 15 * 60
+        // The common case here is a successful request returning nothing —
+        // nobody you follow is streaming — which is worth saying outright.
+        collectionVC.emptyIcon = .live
+        collectionVC.emptyMessage = "关注的UP主当前没有开播"
     }
 
     override func request(page: Int) async throws -> [LiveRoom] {

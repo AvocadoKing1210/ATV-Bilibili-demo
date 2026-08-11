@@ -56,8 +56,7 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
     }
 
     func goDetail(with record: T) {
-        let detailVC = VideoDetailViewController.create(aid: record.aid, cid: record.cid)
-        detailVC.present(from: self)
+        VideoPlaybackPresenter.present(aid: record.aid, cid: record.cid, title: record.title, from: self)
     }
 
     func reloadData() {
@@ -79,9 +78,12 @@ class StandardVideoCollectionViewController<T: PlayableData>: UIViewController, 
             collectionVC.displayDatas = []
             collectionVC.appendData(displayData: res)
         } catch let err {
-            let alert = UIAlertController(title: "Error", message: "\(err)", preferredStyle: .alert)
-            alert.addAction(.init(title: "Ok", style: .cancel))
-            present(alert, animated: true)
+            // In-canvas, not a modal: on a 10-foot display an alert hides the
+            // very screen that failed and has to be dismissed before you can
+            // see where you are.
+            collectionVC.showError("加载失败\n\(err.localizedDescription)") { [weak self] in
+                self?.reloadData()
+            }
         }
     }
 

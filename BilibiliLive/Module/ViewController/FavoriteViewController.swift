@@ -65,10 +65,10 @@ class FavoriteVideoContentViewController: StandardVideoCollectionViewController<
 
     override func goDetail(with record: FavData) {
         if let seasonId = record.ogv?.season_id {
-            VideoDetailViewController.create(seasonId: seasonId).present(from: self)
+            VideoPlaybackPresenter.present(seasonId: seasonId, title: record.title, from: self)
         } else {
-            let vc = VideoDetailViewController.create(aid: record.id, cid: 0)
-            vc.present(from: UIViewController.topMostViewController())
+            VideoPlaybackPresenter.present(aid: record.id, cid: 0, title: record.title,
+                                          from: UIViewController.topMostViewController())
         }
     }
 }

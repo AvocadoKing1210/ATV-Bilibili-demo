@@ -144,21 +144,36 @@ class UpCell: BLMotionCollectionViewCell {
             make.trailing.equalTo(nameLabel.snp.trailing).offset(-20)
         }
 
-        nameLabel.font = UIFont.systemFont(ofSize: 30, weight: .semibold)
+        nameLabel.font = DS.Font.cardTitle
         nameLabel.fadeLength = 60
-        despLabel.font = UIFont.systemFont(ofSize: 20, weight: .regular)
-        despLabel.textColor = UIColor(named: "titleColor")
-        contentView.backgroundColor = UIColor(named: "bgColor")
-        contentView.layer.cornerRadius = 16
+        // 20pt is under the 10-foot floor, and the signature line only got
+        // away with it while it was drawn at full strength.
+        despLabel.font = DS.Font.meta
+        contentView.layer.cornerRadius = DS.Radius.card
+        contentView.layer.cornerCurve = .continuous
+        updateColor()
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
+        coordinator.addCoordinatedAnimations { [weak self] in self?.updateColor() }
         if isFocused {
             startScroll()
         } else {
             stopScroll()
         }
+    }
+
+    /// Same token pair as every other row card — see `SettingsSwitchCell`.
+    ///
+    /// These cards used to draw from the legacy `bgColor` asset, which only
+    /// defines a *dark* variant; its base colour is a reference to the app tint,
+    /// and this app's accent is bilibili pink. In Light the whole card came out
+    /// pink, and the labels sat on it at whatever `labelColor` resolved to.
+    private func updateColor() {
+        contentView.backgroundColor = isFocused ? DS.Color.pill : DS.Color.surface
+        nameLabel.textColor = isFocused ? DS.Color.pillInk : DS.Color.textPrimary
+        despLabel.textColor = isFocused ? DS.Color.pillInk : DS.Color.textSecondary
     }
 
     private func startScroll() {
