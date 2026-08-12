@@ -20,11 +20,6 @@ extension String {
         }
     }
 
-    func isMatch(pattern: String) -> Bool {
-        let regex = try! NSRegularExpression(pattern: pattern, options: [])
-        return regex.firstMatch(in: self, options: [], range: NSMakeRange(0, utf16.count)) != nil
-    }
-
     func removingHTMLTags() -> String {
         return replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
     }

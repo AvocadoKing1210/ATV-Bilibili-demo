@@ -96,12 +96,6 @@ enum Settings {
     @UserDefault("Settings.requestHotWithoutCookie", defaultValue: false)
     static var requestHotWithoutCookie: Bool
 
-    @UserDefault("Settings.arealimit.unlock", defaultValue: false)
-    static var areaLimitUnlock: Bool
-
-    @UserDefault("Settings.arealimit.customServer", defaultValue: "")
-    static var areaLimitCustomServer: String
-
     @UserDefault("Settings.ui.sideMenuAutoSelectChange", defaultValue: false)
     static var sideMenuAutoSelectChange: Bool
 

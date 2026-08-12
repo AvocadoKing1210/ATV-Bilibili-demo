@@ -11,7 +11,7 @@ import UIKit
 struct PlayerDetailData {
     let aid: Int
     let cid: Int
-    let epid: Int? // 港澳台解锁需要
+    let epid: Int? // 番剧 episode_id
     let seasonId: Int? // 番剧 season_id
     let subType: Int? // 0: 普通视频 1：番剧 2：电影 3：纪录片 4：国创 5：电视剧 7：综艺
 
@@ -168,18 +168,7 @@ class VideoPlayerViewModel {
             var clipInfos: [VideoPlayURLInfo.ClipInfo]?
 
             if playInfo.isBangumi {
-                do {
-                    playData = try await WebRequest.requestPcgPlayUrl(aid: aid, cid: cid, options: playContextMode.requestOptions)
-                } catch let err as RequestError {
-                    if case let .statusFail(code, _) = err,
-                       code == -404 || code == -10403,
-                       let data = try await fetchAreaLimitPcgVideoData(for: playInfo)
-                    {
-                        playData = data
-                    } else {
-                        throw err
-                    }
-                }
+                playData = try await WebRequest.requestPcgPlayUrl(aid: aid, cid: cid, options: playContextMode.requestOptions)
 
                 clipInfos = playData.clip_info_list
             } else {
@@ -396,62 +385,6 @@ class VideoPlayerViewModel {
             return .preview
         case .regular, .feedFlow:
             return .regular
-        }
-    }
-}
-
-// 港澳台解锁
-extension VideoPlayerViewModel {
-    private func fetchAreaLimitPcgVideoData(for playInfo: PlayInfo) async throws -> VideoPlayURLInfo? {
-        guard Settings.areaLimitUnlock else { return nil }
-        guard let epid = playInfo.epid, epid > 0 else { return nil }
-
-        let season = try await WebRequest.requestBangumiSeasonView(epid: epid)
-        let checkTitle = season.title.contains("僅") ? season.title : season.series_title
-        let checkAreaList = parseAreaByTitle(title: checkTitle)
-        guard !checkAreaList.isEmpty else { return nil }
-
-        let playData = try await requestAreaLimitPcgPlayUrl(epid: epid, cid: playInfo.cid!, areaList: checkAreaList)
-        return playData
-    }
-
-    private func requestAreaLimitPcgPlayUrl(epid: Int, cid: Int, areaList: [String]) async throws -> VideoPlayURLInfo? {
-        for area in areaList {
-            do {
-                return try await WebRequest.requestAreaLimitPcgPlayUrl(epid: epid,
-                                                                       cid: cid,
-                                                                       area: area,
-                                                                       options: playContextMode.requestOptions)
-            } catch let err {
-                if area == areaList.last {
-                    throw err
-                } else {
-                    print(err)
-                }
-            }
-        }
-        return nil
-    }
-
-    private func parseAreaByTitle(title: String) -> [String] {
-        if title.isMatch(pattern: "[仅|僅].*[东南亚|其他]") {
-            // TODO: 未支持
-            return []
-        }
-
-        var areas: [String] = []
-        if title.isMatch(pattern: "僅.*台") {
-            areas.append("tw")
-        }
-        if title.isMatch(pattern: "僅.*港") {
-            areas.append("hk")
-        }
-
-        if areas.isEmpty {
-            // 标题没有地区限制信息，返回尝试检测的区域
-            return ["tw", "hk"]
-        } else {
-            return areas
         }
     }
 }

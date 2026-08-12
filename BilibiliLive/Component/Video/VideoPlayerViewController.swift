@@ -12,7 +12,7 @@ import UIKit
 struct PlayInfo: Hashable {
     var aid: Int
     var cid: Int? = 0
-    var epid: Int? = 0 // 港澳台解锁需要
+    var epid: Int? = 0 // 番剧 episode_id
     var seasonId: Int? = 0 // 番剧 season_id
     var ctime: Int? = 0
     var subType: Int? = nil // 0: 普通视频 1：番剧 2：电影 3：纪录片 4：国创 5：电视剧 7：综艺

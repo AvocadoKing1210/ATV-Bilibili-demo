@@ -59,8 +59,6 @@ enum WebRequest {
         static let playerInfo = "https://api.bilibili.com/x/player/wbi/v2"
         static let playUrl = "https://api.bilibili.com/x/player/wbi/playurl"
         static let pcgPlayUrl = "https://api.bilibili.com/pgc/player/web/playurl"
-        static let bangumiSeason = "https://bangumi.bilibili.com/view/web_api/season"
-        static let userEpisodeInfo = "https://api.bilibili.com/pgc/season/episode/web/info"
         static let danmuWebView = "https://api.bilibili.com/x/v2/dm/web/view"
         static let danmuList = "https://api.bilibili.com/x/v2/dm/list/seg.so"
 //        static let spi = "https://api.bilibili.com/x/frontend/finger/spi"
@@ -291,20 +289,6 @@ extension WebRequest {
         return res
     }
 
-    static func requestBangumiSeasonView(epid: Int) async throws -> BangumiSeasonView {
-        let info: BangumiSeasonView = try await request(url: EndPoint.bangumiSeason, parameters: ["ep_id": epid], dataObj: "result")
-        return info
-    }
-
-    static func requestBangumiSeasonView(seasonID: Int) async throws -> BangumiSeasonView {
-        let info: BangumiSeasonView = try await request(url: EndPoint.bangumiSeason, parameters: ["season_id": seasonID], dataObj: "result")
-        return info
-    }
-
-    static func requestUserEpisodeInfo(epid: Int) async throws -> UserEpisodeInfo {
-        try await request(url: EndPoint.userEpisodeInfo, parameters: ["ep_id": epid])
-    }
-
     static func requestHistory(complete: (([HistoryData]) -> Void)?) {
         request(url: "https://api.bilibili.com/x/v2/history") {
             (result: Result<[HistoryData], RequestError>) in
@@ -517,46 +501,6 @@ extension WebRequest {
             parameters["fourk"] = 1
         }
         return try await request(url: EndPoint.pcgPlayUrl,
-                                 parameters: parameters,
-                                 dataObj: "result")
-    }
-
-    static func requestAreaLimitPcgPlayUrl(epid: Int,
-                                           cid: Int,
-                                           area: String,
-                                           options: PlayURLRequestOptions = .regular) async throws -> VideoPlayURLInfo
-    {
-        let customServer = Settings.areaLimitCustomServer
-        guard !customServer.isEmpty else { throw ValidationError.argumentInvalid(message: "未设置解析服务器") }
-
-        // 解析服务器必须使用ep_id参数，不能使用avid参数，解析服务器一般有缓存，area和ep_id必须保持一致，要不然会被缓存拦截
-        let url = EndPoint.pcgPlayUrl.replacingOccurrences(of: "api.bilibili.com", with: customServer)
-        var parameters: [String: Any] = ["ep_id": epid,
-                                         "cid": cid,
-                                         "qn": options.qn,
-                                         "fnver": 0,
-                                         "fnval": options.fnval,
-                                         "area": area]
-        if options.supportMultiAudio {
-            parameters["support_multi_audio"] = 1
-        }
-        if options.enableFourK {
-            parameters["fourk"] = 1
-        }
-        if let access_key = ApiRequest.getToken()?.accessToken {
-            parameters["access_key"] = access_key
-        }
-        parameters["appkey"] = ApiRequest.appkey
-        parameters["local_id"] = 0
-        parameters["mobi_app"] = "android"
-
-        // 同步b站cookie给代理域
-//        var headers: [String: String] = [:]
-//        if let cookies = Session.default.sessionConfiguration.httpCookieStorage?.cookies(for: URL(string: "https://api.bilibili.com")!) {
-//            headers = HTTPCookie.requestHeaderFields(with: cookies)
-//        }
-
-        return try await request(url: url,
                                  parameters: parameters,
                                  dataObj: "result")
     }
@@ -973,11 +917,6 @@ struct Replys: Codable, Hashable {
     let replies: [Reply]?
 }
 
-struct BangumiSeasonInfo: Codable {
-    let main_section: BangumiInfo
-    let section: [BangumiInfo]
-}
-
 struct BangumiInfo: Codable, Hashable {
     struct Episode: Codable, Hashable {
         let id: Int
@@ -1035,75 +974,6 @@ struct BangumiInfo: Codable, Hashable {
 
         return nil
     }
-}
-
-struct BangumiSeasonView: Codable, Hashable {
-    struct Episode: Codable, Hashable {
-        let ep_id: Int
-        let aid: Int
-        let cid: Int
-        let bvid: String?
-        let duration: Int
-        let cover: URL
-        let index_title: String?
-        let index: String
-        let pub_real_time: String
-        let section_type: Int
-
-        var pubdate: Int? {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            if let date = dateFormatter.date(from: pub_real_time) {
-                return Int(date.timeIntervalSince1970)
-            }
-            return nil
-        }
-
-        var durationSeconds: Int {
-            return Int(duration / 1000)
-        }
-    }
-
-    struct UpInfo: Codable, Hashable {
-        let mid: Int
-        let uname: String
-        let avatar: String
-        let follower: Int?
-    }
-
-    let up_info: UpInfo
-    let episodes: [Episode]
-    let title: String
-    let series_title: String
-    let evaluate: String
-}
-
-struct UserEpisodeInfo: Codable, Hashable {
-    struct RelatedUp: Codable, Hashable {
-        let avatar: String
-        let is_follow: Int
-        let mid: Int
-        let uname: String
-    }
-
-    struct Stat: Codable, Hashable {
-        let coin: Int
-        let dm: Int
-        let like: Int
-        let reply: Int
-        let view: Int
-    }
-
-    struct UserCommunity: Codable, Hashable {
-        let coin_number: Int
-        let favorite: Int
-        let is_original: Int
-        let like: Int
-    }
-
-    let related_up: [RelatedUp]
-    let stat: Stat
-    let user_community: UserCommunity
 }
 
 struct VideoOwner: Codable, Hashable {

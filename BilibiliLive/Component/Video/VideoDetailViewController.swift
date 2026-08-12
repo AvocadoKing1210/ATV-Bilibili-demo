@@ -325,14 +325,7 @@ class VideoDetailViewController: UIViewController {
             }
             update(with: data)
         } catch let err {
-            if case let .statusFail(code, _) = err as? RequestError, code == -404 {
-                // 解锁港澳台番剧处理
-                if let ok = await fetchAreaLimitBangumiData(), !ok {
-                    self.exit(with: err)
-                }
-            } else {
-                self.exit(with: err)
-            }
+            self.exit(with: err)
         }
 
         WebRequest.requestReplys(aid: aid) { [weak self] replys in
@@ -357,42 +350,6 @@ class VideoDetailViewController: UIViewController {
         WebRequest.requestFavoriteStatus(aid: aid) { [weak self] isFavorited in
             self?.favButton.isOn = isFavorited
         }
-    }
-
-    private func fetchAreaLimitBangumiData() async -> Bool? {
-        guard Settings.areaLimitUnlock else { return false }
-
-        do {
-            var info: ApiRequest.BangumiInfo?
-
-            if seasonId > 0 {
-                info = try await ApiRequest.requestBangumiInfo(seasonID: seasonId)
-            } else if epid > 0 {
-                info = try await ApiRequest.requestBangumiInfo(epid: epid)
-            }
-            guard let info = info else { return false }
-
-            let season = try await WebRequest.requestBangumiSeasonView(seasonID: info.season_id)
-            isBangumi = true
-            if let epi = season.episodes.first(where: { $0.ep_id == epid }) ?? season.episodes.first {
-                aid = epi.aid
-                cid = epi.cid
-                pages = season.episodes.filter { $0.section_type == 0 }.map({ VideoPage(cid: $0.cid, page: $0.aid, epid: $0.ep_id, from: "", part: $0.index + " " + ($0.index_title ?? "")) })
-
-                let userEpisodeInfo = try await WebRequest.requestUserEpisodeInfo(epid: epi.ep_id)
-
-                let data = VideoDetail(View: VideoDetail.Info(aid: aid, cid: cid, title: info.title, videos: nil, pic: epi.cover, desc: info.evaluate, owner: VideoOwner(mid: season.up_info.mid, name: season.up_info.uname, face: season.up_info.avatar), pages: nil, dynamic: nil, bvid: epi.bvid, duration: epi.durationSeconds, pubdate: epi.pubdate, ugc_season: nil, redirect_url: nil, stat: VideoDetail.Info.Stat(favorite: info.stat.favorites, coin: info.stat.coins, like: info.stat.likes, share: info.stat.share, danmaku: info.stat.danmakus, view: info.stat.views)), Related: [], Card: VideoDetail.Owner(following: userEpisodeInfo.related_up.first?.is_follow == 1, follower: season.up_info.follower))
-
-                self.data = data
-                update(with: data)
-                return true
-            }
-
-        } catch let err {
-            print(err)
-        }
-
-        return false
     }
 
     private func update(with data: VideoDetail) {

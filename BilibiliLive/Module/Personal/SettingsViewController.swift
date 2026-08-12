@@ -262,13 +262,6 @@ class SettingsViewController: UIViewController {
                     Settings.danmuStrokeAlpha = value
                 }
             }
-
-            SectionModel(title: "港澳台解锁") {
-                Toggle(title: "解锁港澳台番剧限制", setting: Settings.areaLimitUnlock, onChange: Settings.areaLimitUnlock.toggle())
-                TextField(title: "设置港澳台解析服务器", message: "为了安全考虑建议自建服务器，公共服务器可用性难保证，请多尝试几个。\n公共服务器请参考：http://985.so/mjq9u", current: Settings.areaLimitCustomServer, placeholder: "api.example.com") {
-                    Settings.areaLimitCustomServer = $0 ?? ""
-                }
-            }
         }
     }
 }
@@ -303,34 +296,6 @@ extension SettingsViewController {
                 }
                 alert.addAction(action)
             }
-            let cancelAction = UIAlertAction(title: nil, style: .cancel)
-            alert.addAction(cancelAction)
-            self?.present(alert, animated: true)
-        }
-    }
-
-    func TextField(title: String,
-                   message: String?,
-                   current: String,
-                   placeholder: String?,
-                   isSecureTextEntry: Bool = false,
-                   onSubmit: ((String?) -> Void)? = nil) -> CellModel
-    {
-        return CellModel(title: title, desp: current) { [weak self] update in
-            let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-            alert.addTextField { textField in
-                textField.text = current
-                textField.keyboardType = .URL
-                textField.placeholder = placeholder
-                textField.isSecureTextEntry = isSecureTextEntry
-            }
-
-            let action = UIAlertAction(title: "确定", style: .default) { _ in
-                onSubmit?(alert.textFields![0].text)
-                update()
-            }
-            alert.addAction(action)
-
             let cancelAction = UIAlertAction(title: nil, style: .cancel)
             alert.addAction(cancelAction)
             self?.present(alert, animated: true)
