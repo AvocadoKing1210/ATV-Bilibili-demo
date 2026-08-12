@@ -27,11 +27,16 @@ class Defaults {
 }
 
 enum Settings {
-    @UserDefaultCodable("Settings.displayStyle", defaultValue: .normal)
+    /// Three per row is the house grid — it is what 排行榜 has always shown, and
+    /// a 3-up card is the only one wide enough for a two-line title to read at
+    /// 10 feet. Four stays available in Settings for anyone who wants density.
+    @UserDefaultCodable("Settings.displayStyle", defaultValue: .large)
     static var displayStyle: FeedDisplayStyle
 
-    @UserDefault("Settings.direatlyEnterVideo", defaultValue: false)
-    static var direatlyEnterVideo: Bool
+    /// Default: selecting a video plays it. The detail page's content lives in
+    /// the docked player's panes now (简介 / 评论 / 选集 / 相关推荐), so stopping on
+    /// it first is a step with nothing behind it. The toggle stays for anyone
+    /// who wants the old page.
 
     @UserDefaultCodable("Settings.mediaQuality", defaultValue: .quality_1080p)
     static var mediaQuality: MediaQualityEnum
@@ -90,8 +95,6 @@ enum Settings {
     @UserDefault("Settings.play.autoSkip", defaultValue: true)
     static var autoSkip: Bool
 
-    @UserDefault("Settings.showRelatedVideoInCurrentVC", defaultValue: true)
-    static var showRelatedVideoInCurrentVC: Bool
 
     @UserDefault("Settings.requestHotWithoutCookie", defaultValue: false)
     static var requestHotWithoutCookie: Bool

@@ -7,7 +7,36 @@
 
 import UIKit
 
+/// The settings groups, as an addressable list. They used to exist only as
+/// titles inside one builder closure, which meant the only way to know what
+/// groups there were was to build every one of them. The 设置 page needs the
+/// titles up front to lay out its chip row, so they live here instead.
+enum SettingsSection: String, CaseIterable {
+    case general = "通用"
+    case display = "界面"
+    case media = "音视频"
+    case playback = "进度控制"
+    case danmu = "弹幕"
+    case areaLimit = "港澳台解锁"
+
+    var title: String { rawValue }
+}
+
+/// One settings group, rendered as a pane. The group is chosen by whoever
+/// mounts this — the 设置 page gives each one its own chip — so the controller
+/// carries no navigation of its own.
 class SettingsViewController: UIViewController {
+    enum Layout {
+        static let rowHeight: CGFloat = 84
+        /// Lines the rows up with the first chip above them.
+        static let lead = DS.Space.contentLead + DS.Space.m
+        /// A readable measure, not the whole pane. The pane is the screen less
+        /// the rail now, and a row stretched across all of it leaves its value
+        /// an eye-movement away from its label. Fixed rather than derived —
+        /// tvOS reports a 1920-wide layout on every device (see `DS`).
+        static let width: CGFloat = 1180
+    }
+
     class SectionModel: Hashable, Equatable {
         let title: String
         let items: [CellModel]
@@ -49,29 +78,21 @@ class SettingsViewController: UIViewController {
         }
     }
 
+    /// One section per controller, so the pane needs no headers — the selected
+    /// chip above the list names it.
     let collectionView: UICollectionView = {
-        let layout = UICollectionViewCompositionalLayout { sectionIndex, environment -> NSCollectionLayoutSection? in
-            let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(68))
-            let item = NSCollectionLayoutItem(layoutSize: itemSize)
-
-            let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(68))
-            let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
-            group.interItemSpacing = .fixed(10)
-
+        let layout = UICollectionViewCompositionalLayout { _, _ -> NSCollectionLayoutSection? in
+            let size = NSCollectionLayoutSize(
+                widthDimension: .fractionalWidth(1.0),
+                heightDimension: .absolute(Layout.rowHeight)
+            )
+            let item = NSCollectionLayoutItem(layoutSize: size)
+            let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
-            let headerSize = NSCollectionLayoutSize(
-                widthDimension: .fractionalWidth(1),
-                heightDimension: .estimated(44)
+            section.interGroupSpacing = DS.Space.xs
+            section.contentInsets = NSDirectionalEdgeInsets(
+                top: 0, leading: 0, bottom: DS.Space.xxl, trailing: 0
             )
-
-            let header = NSCollectionLayoutBoundarySupplementaryItem(
-                layoutSize: headerSize,
-                elementKind: "header",
-                alignment: .top
-            )
-            header.pinToVisibleBounds = false
-            section.boundarySupplementaryItems = [header]
-            section.interGroupSpacing = 10
             return section
         }
         return UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -79,13 +100,35 @@ class SettingsViewController: UIViewController {
 
     var dataSource: UICollectionViewDiffableDataSource<SectionModel, CellModel>!
 
+    private let section: SettingsSection
+
+    init(section: SettingsSection) {
+        self.section = section
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .clear
+
         view.addSubview(collectionView)
+
         collectionView.remembersLastFocusedIndexPath = false
+        collectionView.backgroundColor = .clear
+        // A focused row grows past its own edges, and the collection view is
+        // the thing that would clip it.
+        collectionView.clipsToBounds = false
+        // Leads in with the first chip above it, and stops at a readable
+        // measure — the pane is now the full width of the screen minus the
+        // rail, and a settings row stretched across all of it puts its value
+        // an eye-movement away from its label.
         collectionView.snp.makeConstraints { make in
-            make.top.right.bottom.equalToSuperview()
-            make.left.equalToSuperview().offset(20)
+            make.leading.equalToSuperview().offset(Layout.lead)
+            make.top.bottom.equalToSuperview()
+            make.width.equalTo(Layout.width)
         }
 
         collectionView.delegate = self
@@ -102,27 +145,52 @@ class SettingsViewController: UIViewController {
             cell.set(with: cellModel)
             return cell
         }
-        dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
-            let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "HeaderView", for: indexPath) as! SettingsHeaderView
-            let title = self?.dataSource.snapshot().sectionIdentifiers[indexPath.section].title ?? UUID().uuidString
-
-            header.label.text = title
-            return header
-        }
     }
 
     private func setupData() {
-        createSnapshot {
-            SectionModel(title: "通用") {
+        apply(makeSection())
+    }
+
+    private func actionLogout() {
+        let alert = UIAlertController(title: "确定登出？", message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in
+            WebRequest.logout {
+                ApiRequest.logout { hasRemainingAccount in
+                    if hasRemainingAccount {
+                        AccountManager.shared.refreshActiveAccountProfile()
+                    } else {
+                        AppDelegate.shared.showLogin()
+                    }
+                }
+            }
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    /// Only the mounted group is built. The others cost nothing until some
+    /// other chip asks for them.
+    private func makeSection() -> SectionModel {
+        switch section {
+        case .general:
+            return SectionModel(title: section.title) {
                 Toggle(title: "启用投屏", setting: Settings.enableDLNA, onChange: Settings.enableDLNA.toggle()) {
                     _ in
                     BiliBiliUpnpDMR.shared.start()
                 }
 
                 Toggle(title: "热门个性化推荐", setting: Settings.requestHotWithoutCookie, onChange: Settings.requestHotWithoutCookie.toggle())
+
+                // The rail's avatar row covers switching accounts; this is the
+                // only way out of one, so it lives with the general settings
+                // rather than in a pane of its own.
+                Navigation(title: "登出", desp: "") { [weak self] in
+                    self?.actionLogout()
+                }
             }
 
-            SectionModel(title: "界面") {
+        case .display:
+            return SectionModel(title: section.title) {
                 Navigation(title: "自定义Tab栏", desp: "") { [weak self] in
                     let controller = TabBarCustomizationViewController()
                     self?.present(controller, animated: true)
@@ -135,47 +203,17 @@ class SettingsViewController: UIViewController {
                 {
                     Settings.displayStyle = $0
                 }
-                Toggle(title: "侧边栏菜单自动切换", setting: Settings.sideMenuAutoSelectChange, onChange: Settings.sideMenuAutoSelectChange.toggle())
+                // Named for the sidebar it used to drive; the sidebars are
+                // gone and the chip rows inherited the behaviour.
+                Toggle(title: "焦点移动即切换菜单", setting: Settings.sideMenuAutoSelectChange, onChange: Settings.sideMenuAutoSelectChange.toggle())
 
-                Toggle(title: "不显示详情页直接进入视频",
-                       setting: Settings.direatlyEnterVideo,
-                       onChange: Settings.direatlyEnterVideo.toggle())
-
-                Actions(title: "视频详情相关推荐加载模式", message: "4k以上需要大会员",
-                        current: Settings.showRelatedVideoInCurrentVC ? "页面刷新" : "新页面中打开",
-                        options: [true, false],
-                        optionString: ["页面刷新", "新页面中打开"])
-                {
-                    Settings.showRelatedVideoInCurrentVC = $0
-                }
+                // 「不显示详情页直接进入视频」「视频详情相关推荐加载模式」两个开关
+                // 随详情页一起去掉了：选中视频现在总是直接起播，相关推荐也在播放器
+                // 内切换，两个开关都无处生效。见 Archive/README.md。
             }
 
-            SectionModel(title: "推荐") {
-                Toggle(title: "使用沉浸式浏览模式",
-                       setting: Settings.recommendFeedFlowEnabled,
-                       onChange: Settings.recommendFeedFlowEnabled.toggle())
-                Actions(title: "沉浸式视频时长上限", message: "用于筛选沉浸式推荐中的短视频",
-                        current: Settings.featuredDurationLimit.title,
-                        options: FeaturedDurationLimit.allCases,
-                        optionString: FeaturedDurationLimit.allCases.map { $0.title })
-                {
-                    Settings.featuredDurationLimit = $0
-                }
-                Toggle(title: "沉浸式推荐内容安全过滤",
-                       setting: Settings.featuredContentSafetyFilterEnabled,
-                       onChange: Settings.featuredContentSafetyFilterEnabled.toggle())
-            }
-
-            SectionModel(title: "关注页面") {
-                Toggle(title: "关注刷视频模式",
-                       setting: Settings.followsFeedFlowEnabled,
-                       onChange: Settings.followsFeedFlowEnabled.toggle())
-                { _ in
-                    NotificationCenter.default.post(name: .followsLayoutModeDidChange, object: nil)
-                }
-            }
-
-            SectionModel(title: "音视频") {
+        case .media:
+            return SectionModel(title: section.title) {
                 Actions(title: "最高画质", message: "4k以上需要大会员",
                         current: Settings.mediaQuality.desp,
                         options: MediaQualityEnum.allCases,
@@ -196,7 +234,8 @@ class SettingsViewController: UIViewController {
                 Toggle(title: "仅在HDR视频匹配视频内容", setting: Settings.contentMatchOnlyInHDR, onChange: Settings.contentMatchOnlyInHDR.toggle())
             }
 
-            SectionModel(title: "进度控制") {
+        case .playback:
+            return SectionModel(title: section.title) {
                 Toggle(title: "从上次退出的位置继续播放", setting: Settings.continuePlay, onChange: Settings.continuePlay.toggle())
                 Toggle(title: "自动跳过片头片尾", setting: Settings.autoSkip, onChange: Settings.autoSkip.toggle())
                 Toggle(title: "连续播放", setting: Settings.continouslyPlay, onChange: Settings.continouslyPlay.toggle())
@@ -209,7 +248,8 @@ class SettingsViewController: UIViewController {
                 }
             }
 
-            SectionModel(title: "弹幕") {
+        case .danmu:
+            return SectionModel(title: section.title) {
                 Toggle(title: "用户自定义弹幕屏蔽", setting: Settings.enableDanmuFilter, onChange: Settings.enableDanmuFilter.toggle()) {
                     enable in
                     if enable {
@@ -263,7 +303,8 @@ class SettingsViewController: UIViewController {
                 }
             }
 
-            SectionModel(title: "港澳台解锁") {
+        case .areaLimit:
+            return SectionModel(title: section.title) {
                 Toggle(title: "解锁港澳台番剧限制", setting: Settings.areaLimitUnlock, onChange: Settings.areaLimitUnlock.toggle())
                 TextField(title: "设置港澳台解析服务器", message: "为了安全考虑建议自建服务器，公共服务器可用性难保证，请多尝试几个。\n公共服务器请参考：http://985.so/mjq9u", current: Settings.areaLimitCustomServer, placeholder: "api.example.com") {
                     Settings.areaLimitCustomServer = $0 ?? ""
@@ -349,12 +390,10 @@ extension SettingsViewController {
 }
 
 extension SettingsViewController: UICollectionViewDelegate {
-    private func createSnapshot(@ArrayBuilder<SectionModel> builder: () -> [SectionModel]) {
+    private func apply(_ section: SectionModel) {
         var snapshot = NSDiffableDataSourceSnapshot<SectionModel, CellModel>()
-        for section in builder() {
-            snapshot.appendSections([section])
-            snapshot.appendItems(section.items, toSection: section)
-        }
+        snapshot.appendSections([section])
+        snapshot.appendItems(section.items, toSection: section)
         dataSource.apply(snapshot, animatingDifferences: false)
     }
 
@@ -372,6 +411,9 @@ class SettingsSwitchCell: BLMotionCollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        // The inherited 1.1 is the card figure; a full-width row at that scale
+        // throws its edges 80pt past itself.
+        scaleFactor = DS.Focus.rowScale
         setupView()
     }
 
@@ -395,16 +437,20 @@ class SettingsSwitchCell: BLMotionCollectionViewCell {
     func setupView() {
         contentView.addSubview(titleLabel)
         contentView.addSubview(descLabel)
-        contentView.layer.cornerRadius = 10
+        contentView.layer.cornerRadius = DS.Radius.railRow
+        contentView.layer.cornerCurve = .continuous
+
+        titleLabel.font = DS.Font.body
+        descLabel.font = DS.Font.body
 
         titleLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(20)
+            make.leading.equalToSuperview().offset(DS.Space.m)
             make.centerY.equalToSuperview()
-            make.trailing.lessThanOrEqualTo(descLabel.snp.leading).offset(-10)
+            make.trailing.lessThanOrEqualTo(descLabel.snp.leading).offset(-DS.Space.s)
         }
 
         descLabel.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().offset(-20)
+            make.trailing.equalToSuperview().offset(-DS.Space.m)
             make.centerY.equalToSuperview()
         }
 
@@ -413,22 +459,12 @@ class SettingsSwitchCell: BLMotionCollectionViewCell {
         updateColor()
     }
 
+    /// A single token pair drives both appearances — the focus fill is always
+    /// the opposite pole of the ground, so the ink follows it.
     func updateColor() {
-        if traitCollection.userInterfaceStyle == .dark {
-            if isFocused {
-                contentView.backgroundColor = UIColor.white
-                titleLabel.textColor = UIColor.black
-                descLabel.textColor = UIColor.black
-            } else {
-                contentView.backgroundColor = UIColor.clear
-                titleLabel.textColor = UIColor.white
-                descLabel.textColor = UIColor.secondaryLabel
-            }
-        } else {
-            contentView.backgroundColor = isFocused ? UIColor.white : UIColor.clear
-            titleLabel.textColor = .black
-            descLabel.textColor = UIColor.secondaryLabel
-        }
+        contentView.backgroundColor = isFocused ? DS.Color.pill : DS.Color.surface
+        titleLabel.textColor = isFocused ? DS.Color.pillInk : DS.Color.textPrimary
+        descLabel.textColor = isFocused ? DS.Color.pillInk : DS.Color.textSecondary
     }
 }
 

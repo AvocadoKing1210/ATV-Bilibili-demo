@@ -17,7 +17,7 @@ extension Settings {
             case .tabBar:
                 return "导航栏"
             case .personal:
-                return "我的页面"
+                return "设置页面"
             }
         }
     }

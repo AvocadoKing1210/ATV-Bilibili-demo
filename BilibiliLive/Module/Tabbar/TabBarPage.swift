@@ -20,7 +20,6 @@ enum TabBarPage: String, CaseIterable, Codable {
     case toView
     case history
     case weeklyWatch
-    case tvRecommend
 
     var title: String {
         switch self {
@@ -28,8 +27,6 @@ enum TabBarPage: String, CaseIterable, Codable {
             return "直播"
         case .feed:
             return "推荐"
-        case .tvRecommend:
-            return "TV推荐"
         case .hot:
             return "热门"
         case .ranking:
@@ -39,7 +36,7 @@ enum TabBarPage: String, CaseIterable, Codable {
         case .favorite:
             return "收藏"
         case .personal:
-            return "我的"
+            return "设置"
         case .search:
             return "搜索"
         case .followBangumi:
@@ -61,7 +58,7 @@ enum TabBarPage: String, CaseIterable, Codable {
 
     var requirePresentInPersonalPage: Bool {
         switch self {
-        case .favorite, .search, .followBangumi, .tvRecommend:
+        case .favorite, .search, .followBangumi:
             return true
         default:
             return false
