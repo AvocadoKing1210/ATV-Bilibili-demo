@@ -106,6 +106,15 @@ final class RailContainerViewController: UIViewController {
         setupContent()
         select(Self.launchSection ?? .home, animated: false)
         updateAccount()
+        // The profile arrives *after* the rail is built more often than not —
+        // it is a network round trip, and a sign-in swaps the root controller
+        // the moment the token lands. Without this the account row kept its
+        // placeholder until the app was next backgrounded and brought forward,
+        // which is what read as "the name and avatar are never fetched".
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateAccount),
+            name: AccountManager.didUpdateNotification, object: nil
+        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(updateAccount),
             name: UIApplication.didBecomeActiveNotification, object: nil

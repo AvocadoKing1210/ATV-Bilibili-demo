@@ -112,9 +112,14 @@ final class AccountManager {
         notifyChange()
     }
 
-    /// Second chance for a name that did not arrive at sign-in. Only the active
-    /// account can be refreshed: the profile endpoint answers for whoever the
-    /// cookie jar says is signed in, and the jar only ever holds one account.
+    /// Second chance for a name that did not arrive at sign-in, and how a
+    /// rename or a new avatar reaches us afterwards. Called at launch, when the
+    /// settings screen loads, and after a switch.
+    ///
+    /// Only the active account is refreshed. The `nav` fallback answers for
+    /// whoever the *cookie jar* says is signed in, and the jar only ever holds
+    /// one account — so asking about any other one could only ever be answered
+    /// wrongly, and `fetchProfile` would drop the reply anyway.
     func refreshActiveAccountProfile() {
         guard let account = activeAccount else { return }
         let mid = account.profile.mid
@@ -169,39 +174,70 @@ final class AccountManager {
 
     // MARK: - Private helpers
 
-    /// The profile comes from a *web* endpoint, which means two things this has
-    /// to work around.
+    /// Name and avatar for one account, tried against two different
+    /// authorities in order of how likely each is to answer.
     ///
-    /// It needs the device fingerprint that the cookie swap immediately before
-    /// this call may have dropped — without a buvid, 风控 rejects the request and
-    /// the account gets stored as "UID 12345" with no avatar. `ensureFingerprint`
-    /// is a no-op once the jar has one, so the common path costs nothing.
+    /// The *app* API goes first, because it authenticates with `access_key` —
+    /// the token the TV QR login just produced — and so is the one source that
+    /// does not care what state the cookie jar is in. That matters precisely at
+    /// sign-in, which is the moment the jar has just been swapped wholesale and
+    /// the web endpoints are least likely to answer; a profile that failed
+    /// there was stored as "UID 12345" with no picture and stayed that way.
     ///
-    /// And it answers for whoever the *cookies* say is signed in, not for
-    /// `access_key`. A reply for a different mid means the jar is not the one we
-    /// think it is, and writing that name onto this account would be worse than
-    /// leaving the placeholder — so it is checked and dropped.
+    /// The *web* `nav` endpoint is the fallback. It needs the device
+    /// fingerprint the cookie swap may have dropped — without a buvid, 风控
+    /// rejects the request — so `ensureFingerprint` runs first; it is a no-op
+    /// once the jar has one, so the common path costs nothing.
+    ///
+    /// Both answer for a mid, and both are checked against the one we asked
+    /// about. A reply for a different account means the jar or the token is not
+    /// the one we think it is, and writing that name here would be worse than
+    /// leaving the placeholder.
     private func fetchProfile(for mid: Int,
                               using token: LoginToken,
-                              allowRetry: Bool = true,
                               completion: @escaping (Profile?) -> Void)
+    {
+        ApiRequest.requestMyInfo(accessKey: token.accessToken) { [weak self] result in
+            // A nameless reply is not a profile. The app API answers 0 with an
+            // empty body often enough — a token accepted but not yet resolved —
+            // and storing that would replace the placeholder with nothing.
+            if case let .success(json) = result, json["mid"].intValue == mid,
+               !json["name"].stringValue.isEmpty
+            {
+                let profile = Profile(mid: mid,
+                                      username: json["name"].stringValue,
+                                      avatar: json["face"].stringValue)
+                DispatchQueue.main.async { completion(profile) }
+                return
+            }
+            guard let self else { return DispatchQueue.main.async { completion(nil) } }
+            self.fetchWebProfile(for: mid, using: token, completion: completion)
+        }
+    }
+
+    /// The `nav` fallback, retried once: a -352 clears the wbi key cache on its
+    /// way out, so a second attempt signs with fresh keys and usually lands.
+    private func fetchWebProfile(for mid: Int,
+                                 using token: LoginToken,
+                                 allowRetry: Bool = true,
+                                 completion: @escaping (Profile?) -> Void)
     {
         WebRequest.ensureFingerprint {
             WebRequest.requestLoginInfo(accessKey: token.accessToken) { [weak self] result in
                 DispatchQueue.main.async {
-                    if case let .success(json) = result, json["mid"].intValue == mid {
+                    if case let .success(json) = result, json["mid"].intValue == mid,
+                       !json["uname"].stringValue.isEmpty
+                    {
                         completion(Profile(mid: mid,
                                            username: json["uname"].stringValue,
                                            avatar: json["face"].stringValue))
                         return
                     }
-                    // A -352 clears the wbi key cache on its way out, so a second
-                    // attempt signs with fresh keys and usually lands.
                     guard let self, allowRetry else {
                         Logger.warn("profile fetch failed for mid \(mid), keeping placeholder name")
                         return completion(nil)
                     }
-                    self.fetchProfile(for: mid, using: token, allowRetry: false, completion: completion)
+                    self.fetchWebProfile(for: mid, using: token, allowRetry: false, completion: completion)
                 }
             }
         }

@@ -29,6 +29,7 @@ enum ApiRequest {
         static let ssoCookie = "https://passport.bilibili.com/api/login/sso"
         static let feed = "https://app.bilibili.com/x/v2/feed/index"
         static let season = "https://api.bilibili.com/pgc/view/v2/app/season"
+        static let myInfo = "https://app.bilibili.com/x/v2/account/myinfo"
     }
 
     enum LoginState {
@@ -76,6 +77,19 @@ enum ApiRequest {
         complete?(hasAccount)
     }
 
+    /// Every app-API call carries these, the way `WebRequest` has always
+    /// carried them on the web side.
+    ///
+    /// Alignment rather than a fix: 风控 answers a request carrying *no* agent
+    /// at all with a bare HTTP 412, but Alamofire's own default agent is
+    /// accepted (measured against both `feed/index` and `myinfo`). Stating our
+    /// agent means these calls stop depending on that, and stop looking
+    /// different from the web ones for no reason.
+    private static let appHeaders: HTTPHeaders = [
+        "User-Agent": Keys.userAgent,
+        "Referer": Keys.referer,
+    ]
+
     static func requestJSON(_ url: URLConvertible,
                             method: HTTPMethod = .get,
                             parameters: Parameters = [:],
@@ -88,7 +102,8 @@ enum ApiRequest {
             parameters["access_key"] = getToken()?.accessToken
         }
         parameters = sign(for: parameters)
-        AF.request(url, method: method, parameters: parameters, encoding: encoding).responseData { response in
+        AF.request(url, method: method, parameters: parameters, encoding: encoding,
+                   headers: appHeaders).responseData { response in
             switch response.result {
             case let .success(data):
                 let json = JSON(data)
@@ -231,6 +246,39 @@ enum ApiRequest {
                 }
             }
         }
+    }
+
+    /// The signed-in user's own name and avatar, from the *app* API.
+    ///
+    /// This is the one call that answers to `access_key` — the very thing the
+    /// TV QR login just handed us — rather than to the web cookie jar. The web
+    /// `nav` endpoint that used to be the only source authenticates by cookie
+    /// and sits behind 风控, so at the one moment we most need it (immediately
+    /// after a sign-in swaps the entire jar) it is the least likely to answer,
+    /// and the account gets stored as "UID 12345" with no picture.
+    ///
+    /// Deliberately not routed through `requestJSON`: that one reads a -101 as
+    /// a dead session and tears the account down. Putting a name on a row must
+    /// never be able to sign somebody out, so failures here are just failures.
+    static func requestMyInfo(accessKey: String, complete: @escaping (Result<JSON, RequestError>) -> Void) {
+        let parameters = sign(for: ["access_key": accessKey])
+        AF.request(EndPoint.myInfo, method: .get, parameters: parameters,
+                   encoding: URLEncoding.default, headers: appHeaders)
+            .responseData { response in
+                switch response.result {
+                case let .success(data):
+                    let json = JSON(data)
+                    let code = json["code"].intValue
+                    guard code == 0 else {
+                        complete(.failure(.statusFail(code: code, message: json["message"].stringValue)))
+                        return
+                    }
+                    complete(.success(json["data"]))
+                case let .failure(err):
+                    Logger.warn("myinfo request failed: \(err)")
+                    complete(.failure(.networkFail))
+                }
+            }
     }
 
     static func refreshToken() {

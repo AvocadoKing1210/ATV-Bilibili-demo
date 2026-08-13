@@ -31,6 +31,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             } else {
                 ApiRequest.refreshToken()
             }
+            // A launch is the second chance for an account whose name and
+            // avatar never arrived at sign-in: without this, one failed fetch
+            // left "UID 12345" on the rail for the life of the install.
+            AccountManager.shared.refreshActiveAccountProfile()
             window?.rootViewController = AppDelegate.makeMainRoot()
         } else {
             window?.rootViewController = LoginViewController.create()
