@@ -20,13 +20,29 @@ import Kingfisher
 import SnapKit
 import UIKit
 
+/// A label that pads its own text, so a chip's width can come from a real
+/// inset rather than from spaces baked into the string.
+private final class InsetLabel: UILabel {
+    var textInsets: UIEdgeInsets = .zero
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: textInsets))
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + textInsets.left + textInsets.right,
+                      height: size.height + textInsets.top + textInsets.bottom)
+    }
+}
+
 final class HomeCardCell: UICollectionViewCell {
     static let reuseID = "HomeCardCell"
 
     private let thumbContainer = UIView()
     private let imageView = UIImageView()
     private let liveBadge = UILabel()
-    private let durationPill = UILabel()
+    private let durationPill = InsetLabel()
     private let progressTrack = UIView()
     private let progressFill = UIView()
     private let titleLabel = UILabel()
@@ -74,7 +90,9 @@ final class HomeCardCell: UICollectionViewCell {
         durationPill.textColor = .white
         durationPill.backgroundColor = UIColor.black.withAlphaComponent(0.7)
         durationPill.textAlignment = .center
-        durationPill.layer.cornerRadius = 6
+        durationPill.textInsets = .init(top: 0, left: DS.CardChip.hInset,
+                                        bottom: 0, right: DS.CardChip.hInset)
+        durationPill.layer.cornerRadius = DS.CardChip.radius
         durationPill.layer.cornerCurve = .continuous
         durationPill.clipsToBounds = true
         durationPill.isHidden = true
@@ -99,12 +117,15 @@ final class HomeCardCell: UICollectionViewCell {
         metaLabel.lineBreakMode = .byTruncatingTail
 
         statsPill.axis = .horizontal
-        statsPill.spacing = 14
+        statsPill.spacing = DS.CardChip.groupGap
         statsPill.alignment = .center
         statsPill.isLayoutMarginsRelativeArrangement = true
-        statsPill.directionalLayoutMargins = .init(top: 3, leading: 9, bottom: 3, trailing: 9)
+        // Vertical margins are gone on purpose: the chip's height is now fixed
+        // to match the duration beside it, and `.center` places the row in it.
+        statsPill.directionalLayoutMargins = .init(top: 0, leading: DS.CardChip.hInset,
+                                                   bottom: 0, trailing: DS.CardChip.hInset)
         statsPill.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-        statsPill.layer.cornerRadius = 6
+        statsPill.layer.cornerRadius = DS.CardChip.radius
         statsPill.layer.cornerCurve = .continuous
         statsPill.alpha = 0
 
@@ -132,13 +153,16 @@ final class HomeCardCell: UICollectionViewCell {
             make.height.equalTo(34)
             make.width.greaterThanOrEqualTo(88)
         }
+        // The two chips are one row: same height, same bottom edge. The
+        // minimum width the duration used to carry is gone with the spaces it
+        // was padded with — `hInset` gives it a real box now.
         durationPill.snp.makeConstraints { make in
-            make.trailing.bottom.equalToSuperview().inset(8)
-            make.height.equalTo(30)
-            make.width.greaterThanOrEqualTo(62)
+            make.trailing.bottom.equalToSuperview().inset(DS.CardChip.inset)
+            make.height.equalTo(DS.CardChip.height)
         }
         statsPill.snp.makeConstraints { make in
-            make.leading.bottom.equalToSuperview().inset(8)
+            make.leading.bottom.equalToSuperview().inset(DS.CardChip.inset)
+            make.height.equalTo(DS.CardChip.height)
             make.trailing.lessThanOrEqualTo(durationPill.snp.leading).offset(-DS.Space.xs)
         }
         progressTrack.snp.makeConstraints { make in
@@ -204,13 +228,13 @@ final class HomeCardCell: UICollectionViewCell {
             guard !item.text.isEmpty, item.text != "-" else { continue }
             let row = UIStackView()
             row.axis = .horizontal
-            row.spacing = 5
+            row.spacing = DS.CardChip.iconGap
             row.alignment = .center
             if let symbol = item.icon, let icon = icon(forOverlaySymbol: symbol) {
                 let iv = UIImageView(image: icon.image)
                 iv.tintColor = .white
                 iv.contentMode = .scaleAspectFit
-                iv.snp.makeConstraints { $0.size.equalTo(20) }
+                iv.snp.makeConstraints { $0.size.equalTo(DS.CardChip.icon) }
                 row.addArrangedSubview(iv)
             }
             let label = UILabel()
@@ -264,7 +288,7 @@ final class HomeCardCell: UICollectionViewCell {
                !duration.isEmpty, duration != "-"
             {
                 durationPill.isHidden = false
-                durationPill.text = " \(duration) "
+                durationPill.text = duration
             }
             buildStats(from: overlay)
         }

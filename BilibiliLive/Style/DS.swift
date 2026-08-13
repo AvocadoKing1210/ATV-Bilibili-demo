@@ -181,6 +181,35 @@ enum DS {
         static let railRow: CGFloat = 14
     }
 
+    /// The two chips drawn over a card thumbnail: counts on the bottom-left,
+    /// duration on the bottom-right.
+    ///
+    /// They are one row and are read as one, so they take one height and one
+    /// baseline. Sizing each to its own content is what put them out of line —
+    /// the left chip carries icons and the right does not, so it came out ~5pt
+    /// taller off the same bottom inset, and the mismatch shows at the top edge
+    /// where nothing anchors them.
+    ///
+    /// `radius` is derived, not chosen. An inner corner sitting `inset` inside
+    /// an outer corner of `Radius.card` has to be `card - inset` for the two
+    /// curves to stay parallel; anything else and the chip reads as a sticker
+    /// laid on the card rather than part of it. Move `card` or `inset` and the
+    /// chip follows on its own.
+    enum CardChip {
+        /// From the thumbnail's edges. Also the gap the radius is derived from.
+        static let inset: CGFloat = 8
+        static let height: CGFloat = 34
+        static let radius: CGFloat = Radius.card - inset
+        /// Real padding, which is what lets both chips share one rule — the
+        /// duration used to buy its breathing room with spaces around the text.
+        static let hInset: CGFloat = 10
+        /// Icon and its gap to the label, on the counts chip.
+        static let icon: CGFloat = 20
+        static let iconGap: CGFloat = 5
+        /// Between the count groups inside the left chip.
+        static let groupGap: CGFloat = 14
+    }
+
     enum Rail {
         static let collapsed: CGFloat = 150
         static let expanded: CGFloat = 440
