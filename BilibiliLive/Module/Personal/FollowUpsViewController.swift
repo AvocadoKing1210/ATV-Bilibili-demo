@@ -164,7 +164,7 @@ class UpCell: BLMotionCollectionViewCell {
         }
     }
 
-    /// Same token pair as every other row card — see `SettingsSwitchCell`.
+    /// Same token pair as every other row card.
     ///
     /// These cards used to draw from the legacy `bgColor` asset, which only
     /// defines a *dark* variant; its base colour is a reference to the app tint,

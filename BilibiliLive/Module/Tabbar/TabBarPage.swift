@@ -56,15 +56,6 @@ enum TabBarPage: String, CaseIterable, Codable {
         self == .personal
     }
 
-    var requirePresentInPersonalPage: Bool {
-        switch self {
-        case .favorite, .search, .followBangumi:
-            return true
-        default:
-            return false
-        }
-    }
-
     static var defaultTabBarPages: [TabBarPage] {
         [.live, .feed, .hot, .ranking, .follows, .favorite, .personal, .search]
     }

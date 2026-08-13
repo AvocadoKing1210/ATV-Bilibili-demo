@@ -10,6 +10,10 @@ import Foundation
 extension Settings {
     enum TabBarPageSection: String, Codable, CaseIterable {
         case tabBar
+        /// Pages parked here appear nowhere. The 设置 page used to host them as
+        /// chips — it is a pure settings screen now, so anything not on the
+        /// rail is simply off. The case keeps its raw value ("personal") so
+        /// placements stored before the change still decode.
         case personal
 
         var title: String {
@@ -17,7 +21,7 @@ extension Settings {
             case .tabBar:
                 return "导航栏"
             case .personal:
-                return "设置页面"
+                return "未启用"
             }
         }
     }
@@ -33,11 +37,6 @@ extension Settings {
     // 导航栏
     static var tabBarPages: [TabBarPage] {
         normalizedPlacements.filter { $0.section == .tabBar }.map(\.page)
-    }
-
-    // 个人中心
-    static var personalPages: [TabBarPage] {
-        normalizedPlacements.filter { $0.section == .personal }.map(\.page)
     }
 
     // 初始化

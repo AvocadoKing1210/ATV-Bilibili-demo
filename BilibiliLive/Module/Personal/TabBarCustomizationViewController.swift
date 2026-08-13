@@ -161,9 +161,7 @@ class TabBarCustomizationViewController: UIViewController {
         switch toSection {
         case .tabBar:
             if tabBarCount >= 8 {
-                let alert = UIAlertController(title: "导航栏最多保留 8 个页面", message: nil, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "知道了", style: .cancel))
-                present(alert, animated: true)
+                presentModalNotice(title: "导航栏最多保留 8 个页面", dismissTitle: "知道了")
                 return false
             }
             minePlacements.remove(at: from.item)
@@ -172,15 +170,11 @@ class TabBarCustomizationViewController: UIViewController {
             print(tabbarPlacements)
         case .personal:
             if editItem.page.isFixedInTabBar {
-                let alert = UIAlertController(title: "该项目只允许在导航栏展示", message: nil, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "知道了", style: .cancel))
-                present(alert, animated: true)
+                presentModalNotice(title: "该项目只允许在导航栏展示", dismissTitle: "知道了")
                 return false
             }
             if tabBarCount <= 3 {
-                let alert = UIAlertController(title: "导航栏至少保留 3 个页面", message: nil, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "知道了", style: .cancel))
-                present(alert, animated: true)
+                presentModalNotice(title: "导航栏至少保留 3 个页面", dismissTitle: "知道了")
                 return false
             }
             tabbarPlacements.remove(at: from.item)

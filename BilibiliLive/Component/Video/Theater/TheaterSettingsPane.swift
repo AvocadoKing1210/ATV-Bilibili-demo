@@ -20,8 +20,10 @@ import UIKit
 
 // MARK: - Row model
 
-/// Mirrors the shape `SettingsViewController` uses, so both screens describe a
-/// setting the same way. `desp` is re-read on every reload rather than cached.
+/// Mirrors the shape the settings screen used when both were UIKit; the main
+/// screen is SwiftUI now (`SettingsScreen`) but the row grammar —
+/// title, note, live-read value — is still the same idea. `desp` is re-read
+/// on every reload rather than cached.
 final class TheaterSettingRow {
     let title: String
     let note: String?
@@ -164,39 +166,30 @@ final class TheaterSettingsPane: UIViewController {
                             select: @escaping (T) -> Void) -> TheaterSettingRow
     {
         TheaterSettingRow(title: title, note: note, desp: current) { [weak self] reload in
-            let alert = UIAlertController(title: title, message: note, preferredStyle: .actionSheet)
-            for (i, name) in titles.enumerated() {
-                alert.addAction(UIAlertAction(title: name, style: .default) { _ in
-                    select(values[i])
-                    reload()
-                })
+            self?.presentModalPicker(title: title, message: note, titles: titles,
+                                     selected: titles.firstIndex(of: current()))
+            { index in
+                select(values[index])
+                reload()
             }
-            alert.addAction(UIAlertAction(title: nil, style: .cancel))
-            self?.present(alert, animated: true)
         }
     }
 
     private func subtitleRow(_ group: AVMediaSelectionGroup) -> TheaterSettingRow {
         let options = group.options
         let titles = ["关"] + options.map { $0.displayName }
-        return TheaterSettingRow(
-            title: "字幕",
-            note: nil,
-            desp: { [weak self] in
-                guard let item = self?.playerItem else { return "关" }
-                guard let sel = item.currentMediaSelection.selectedMediaOption(in: group) else { return "关" }
-                return sel.displayName
-            })
-        { [weak self] reload in
-            let alert = UIAlertController(title: "字幕", message: nil, preferredStyle: .actionSheet)
-            for (i, name) in titles.enumerated() {
-                alert.addAction(UIAlertAction(title: name, style: .default) { _ in
-                    self?.playerItem?.select(i == 0 ? nil : options[i - 1], in: group)
-                    reload()
-                })
+        let current = { [weak self] () -> String in
+            guard let item = self?.playerItem else { return "关" }
+            guard let sel = item.currentMediaSelection.selectedMediaOption(in: group) else { return "关" }
+            return sel.displayName
+        }
+        return TheaterSettingRow(title: "字幕", note: nil, desp: current) { [weak self] reload in
+            self?.presentModalPicker(title: "字幕", titles: titles,
+                                     selected: titles.firstIndex(of: current()))
+            { index in
+                self?.playerItem?.select(index == 0 ? nil : options[index - 1], in: group)
+                reload()
             }
-            alert.addAction(UIAlertAction(title: nil, style: .cancel))
-            self?.present(alert, animated: true)
         }
     }
 
@@ -232,16 +225,14 @@ final class TheaterSettingsPane: UIViewController {
                 desp: { leaves.first(where: { $0.state == .on })?.title ?? "" })
             { [weak self] reload in
                 guard let self else { return }
-                let alert = UIAlertController(title: menu.title, message: nil, preferredStyle: .actionSheet)
-                for leaf in leaves {
-                    let mark = leaf.state == .on ? " ✓" : ""
-                    alert.addAction(UIAlertAction(title: leaf.title + mark, style: .default) { _ in
-                        self.fire(leaf)
-                        reload()
-                    })
+                // The modal draws the current value as a checkmark, so the
+                // " ✓" the sheet used to append to the title can go.
+                presentModalPicker(title: menu.title, titles: leaves.map(\.title),
+                                   selected: leaves.firstIndex { $0.state == .on })
+                { index in
+                    self.fire(leaves[index])
+                    reload()
                 }
-                alert.addAction(UIAlertAction(title: nil, style: .cancel))
-                self.present(alert, animated: true)
             }
         }
     }
