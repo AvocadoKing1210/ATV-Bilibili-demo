@@ -6,6 +6,44 @@
 
  如果您在任何平台上看到有人以收费方式提供本项目的服务或应用，请注意这是**未经授权的**行为，并且与我们的原始意图不符。我们强烈谴责将本项目用于商业盈利的行为，由此引发的任何安全风险与此项目无关。
 
+---
+
+## About this fork
+
+A personal hobby project built on [yichengchen/ATV-Bilibili-demo](https://github.com/yichengchen/ATV-Bilibili-demo), reworking the UI from the ground up. Not affiliated with the original project or with BiliBili, and never distributed commercially — the original disclaimer above applies here in full.
+
+<a href="imgs/ui-rework-demo.mp4"><img src="imgs/ui-rework-preview.gif" alt="UI rework demo" width="100%"></a>
+
+*↑ 点击预览可观看完整视频 / click the preview for the full-quality video*
+
+### What changed
+
+- **Fully programmatic UI** on a shared design system — measured tokens, a custom icon set, and the Outfit display font replace the storyboard-era screens
+- **Home rails** — a browsable home page with content rails and chip-bar filtering
+- **Theater player** — an immersive playback container with related videos, comments and settings panes that never leave the video
+- **SwiftUI settings** — a settings screen built on web-measured design tokens, with a morphing modal replacing system alerts across the app
+- **Playback performance** — CDN host preference, throughput monitoring, segment prefetch and response caching
+
+### Screenshots
+
+<table>
+  <tr>
+    <td><img src="imgs/ui/home-feed.jpg" alt="Home feed"></td>
+    <td><img src="imgs/ui/follows.jpg" alt="Follows with creator rail"></td>
+  </tr>
+  <tr>
+    <td><img src="imgs/ui/theater-related.jpg" alt="Theater — related videos"></td>
+    <td><img src="imgs/ui/theater-comments.jpg" alt="Theater — comments"></td>
+  </tr>
+  <tr>
+    <td><img src="imgs/ui/settings.jpg" alt="Settings"></td>
+    <td><img src="imgs/ui/qr-login.jpg" alt="QR login"></td>
+  </tr>
+</table>
+
+---
+
+*以下为原项目 README 内容 / original project README below.*
 
 ### 支持功能
 - 二维码登录
@@ -47,4 +85,4 @@
 
 - [dreamCodeMan/B-webmask](https://github.com/dreamCodeMan/B-webmask)
 
-- [分析Bilibili客户端的“哔哩必连”协议](https://xfangfang.github.io/028)
+- [分析Bilibili客户端的"哔哩必连"协议](https://xfangfang.github.io/028)
