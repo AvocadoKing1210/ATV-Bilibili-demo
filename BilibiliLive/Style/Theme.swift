@@ -14,8 +14,17 @@
 //  Values are web px; tvOS points at 1080p map 1:1, and `scale` grows the
 //  whole system uniformly for 10-foot legibility.
 //
+//  Every colour is a *pair*, the way `DS.Color` already is. The extraction only
+//  ever captured Discord's dark theme, and shipping those values raw meant the
+//  settings screen stayed dark while the rail beside it went light, and the
+//  modal — whose surface is the system's own material, and therefore flips —
+//  drew near-white text on a near-white panel. The dark column is unchanged;
+//  the light column is its role-for-role counterpart, pitched into the same
+//  warm neutral family `DS` uses so the two systems sit side by side.
+//
 
 import SwiftUI
+import UIKit
 
 extension Color {
     /// sRGB hex color, e.g. Color(hex: 0x5865F2).
@@ -39,39 +48,70 @@ enum Theme {
     // MARK: - Colors (sRGB, resolved from CSS custom properties)
 
     enum Colors {
-        // Backgrounds
-        static let baseLowest = Color(hex: 0x121214) // app frame, rail, sidebar
-        static let baseLower = Color(hex: 0x1A1A1E) // chat/content panel
-        static let baseLow = Color(hex: 0x202024) // user panel
-        static let surfaceHigh = Color(hex: 0x242429) // rail tiles, surfaces
-        static let surfaceHigher = Color(hex: 0x28282D)
-        static let surfaceRaised = Color(hex: 0x27272C) // embeds
+        // Backgrounds. The hierarchy inverts wholesale: where Dark seats the
+        // nav column *below* the pane, Light seats it above — a grey rail
+        // against a near-white pane, which is the arrangement the web client
+        // ships in its own light theme.
+        static let baseLowest = dynamic(dark: 0x121214, light: 0xE9E8E6) // app frame, rail, sidebar
+        static let baseLower = dynamic(dark: 0x1A1A1E, light: 0xFAF9F8) // chat/content panel
+        static let baseLow = dynamic(dark: 0x202024, light: 0xF2F1F0) // user panel
+        static let surfaceHigh = dynamic(dark: 0x242429, light: 0xE4E3E1) // rail tiles, surfaces
+        static let surfaceHigher = dynamic(dark: 0x28282D, light: 0xDCDBD9)
+        static let surfaceRaised = dynamic(dark: 0x27272C, light: 0xE0DFDD) // embeds
 
         // Text
-        static let textDefault = Color(hex: 0xEFEFF1) // body
-        static let textStrong = Color(hex: 0xFBFBFB) // titles, selected rows
-        static let textMuted = Color(hex: 0x96979E) // values, timestamps
-        static let textSubtle = Color(hex: 0xABACB2) // secondary icons
-        static let channelsDefault = Color(hex: 0x81828A) // nav rows at rest
-        static let interactiveMuted = Color(hex: 0x4F505A)
+        static let textDefault = dynamic(dark: 0xEFEFF1, light: 0x2E2E30) // body
+        static let textStrong = dynamic(dark: 0xFBFBFB, light: 0x101010) // titles, selected rows
+        static let textMuted = dynamic(dark: 0x96979E, light: 0x6B6C72) // values, timestamps
+        static let textSubtle = dynamic(dark: 0xABACB2, light: 0x5A5B61) // secondary icons
+        static let channelsDefault = dynamic(dark: 0x81828A, light: 0x6A6B72) // nav rows at rest
+        /// The switch's off-track. Has to read as a filled-but-inert capsule
+        /// against its ground, so it darkens in Dark and lightens in Light
+        /// rather than keeping one value that would vanish into one of them.
+        static let interactiveMuted = dynamic(dark: 0x4F505A, light: 0xB9B9C0)
 
-        // Brand
+        // Brand. Fixed in both: a brand colour that shifts is not one.
         static let blurple = Color(hex: 0x5865F2) // brand-500
         static let blurpleActive = Color(hex: 0x4654C0) // brand-560
+        /// Ink for things drawn *on* a brand fill, so it stays white in both.
         static let white = Color(hex: 0xFFFFFF)
 
-        // Status
-        static let online = Color(hex: 0x3D9E60)
-        static let danger = Color(hex: 0xDA3E44)
-        static let warning = Color(hex: 0xFDB833)
+        // Status. Meanings, not brand — but each still has to hold contrast
+        // against its own ground, so the light column darkens.
+        static let online = dynamic(dark: 0x3D9E60, light: 0x2F7D4F)
+        static let danger = dynamic(dark: 0xDA3E44, light: 0xC02A31)
+        static let warning = dynamic(dark: 0xFDB833, light: 0xB07508)
 
-        // Borders & interactive overlays
-        static let borderSubtle = Color(hex: 0x94949C, alpha: 0.12) // dividers
-        static let borderFaint = Color(hex: 0x94949C, alpha: 0.04) // 1px panel edges
-        static let hoverOverlay = Color(hex: 0x94949C, alpha: 0.12) // mod-subtle
-        static let activeOverlay = Color(hex: 0x9595A2, alpha: 0.16) // mod-normal
-        static let selectedOverlay = Color(hex: 0x9696A0, alpha: 0.20) // mod-strong
+        // Borders & interactive overlays. These are the tokens a straight port
+        // gets most wrong: they are *lightenings* of the ground in Dark, and a
+        // lightening laid over a pale ground is nothing at all. Light darkens
+        // instead, at the alphas that come out to the same apparent strength.
+        static let borderSubtle = dynamic(dark: 0x94949C, light: 0x2E2E30,
+                                          darkAlpha: 0.12, lightAlpha: 0.14) // dividers
+        static let borderFaint = dynamic(dark: 0x94949C, light: 0x2E2E30,
+                                         darkAlpha: 0.04, lightAlpha: 0.06) // 1px panel edges
+        static let hoverOverlay = dynamic(dark: 0x94949C, light: 0x1A1A1E,
+                                          darkAlpha: 0.12, lightAlpha: 0.08) // mod-subtle
+        static let activeOverlay = dynamic(dark: 0x9595A2, light: 0x1A1A1E,
+                                           darkAlpha: 0.16, lightAlpha: 0.10) // mod-normal
+        static let selectedOverlay = dynamic(dark: 0x9696A0, light: 0x1A1A1E,
+                                             darkAlpha: 0.20, lightAlpha: 0.13) // mod-strong
         static let scrim = Color(hex: 0x000000, alpha: 0.72)
+    }
+
+    /// One colour, stated for both appearances. Bridged from a dynamic
+    /// `UIColor` rather than built from `@Environment(\.colorScheme)` so that a
+    /// token can be read from a `static let` — SwiftUI resolves the provider
+    /// against whatever trait collection the view is drawn in, which is also
+    /// what makes these work inside a `UIHostingController`.
+    static func dynamic(dark: Int, light: Int,
+                        darkAlpha: CGFloat = 1, lightAlpha: CGFloat = 1) -> Color
+    {
+        Color(UIColor { trait in
+            trait.userInterfaceStyle == .light
+                ? UIColor(rgb: light, alpha: lightAlpha)
+                : UIColor(rgb: dark, alpha: darkAlpha)
+        })
     }
 
     // MARK: - Metrics (web px × scale)

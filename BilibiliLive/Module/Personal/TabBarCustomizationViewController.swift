@@ -28,7 +28,7 @@ class TabBarCustomizationViewController: UIViewController {
     private let hintLabel: UILabel = {
         let label = UILabel()
         label.font = .preferredFont(forTextStyle: .footnote)
-        label.textColor = UIColor.white
+        label.textColor = DS.Color.textSecondary
         return label
     }()
 
@@ -89,7 +89,10 @@ class TabBarCustomizationViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "选中项目后按播放键开始排序"
-        view.backgroundColor = .black
+        // Reached from 设置 › 界面, so it is part of that screen's world and
+        // takes the app's own ground rather than a fixed black — which in the
+        // Light appearance was a black page hanging off a light settings tab.
+        view.backgroundColor = DS.Color.bg
 
         setupUI()
         reloadPlacementsFromSettings()
@@ -442,12 +445,15 @@ class TabBarTileCell: BLMotionCollectionViewCell {
 
     private func updateAppearance() {
         if isFocused {
-            contentView.backgroundColor = .white
-            titleLabel.textColor = .black
+            // The focus pair, not a fixed white-on-black: `pill` is always the
+            // opposite pole of the ground and `pillInk` its counterpart, so the
+            // tile inverts in either appearance instead of only in Dark.
+            contentView.backgroundColor = DS.Color.pill
+            titleLabel.textColor = DS.Color.pillInk
             layer.shadowOpacity = 0.3
         } else {
-            contentView.backgroundColor = UIColor(white: 0.15, alpha: 1)
-            titleLabel.textColor = .white
+            contentView.backgroundColor = DS.Color.surface
+            titleLabel.textColor = DS.Color.textPrimary
             layer.shadowOpacity = 0
         }
     }
@@ -461,7 +467,7 @@ class TabBarSectionHeaderView: UICollectionReusableView {
     let label: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 30, weight: .bold)
-        l.textColor = .white
+        l.textColor = DS.Color.textPrimary
         return l
     }()
 

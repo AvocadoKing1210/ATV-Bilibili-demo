@@ -29,8 +29,12 @@ class PersonalViewController: UIViewController, BLTabBarContentVCProtocol {
     override func viewDidLoad() {
         super.viewDidLoad()
         // The SwiftUI screen paints its own grounds; this only backstops the
-        // frame during presentation transitions.
-        view.backgroundColor = UIColor(hex: 0x121214)
+        // frame during presentation transitions. It tracks the nav column's
+        // own ground (`Theme.Colors.baseLowest`) in both appearances — a fixed
+        // dark value here flashed a black frame into a Light-appearance push.
+        view.backgroundColor = UIColor { trait in
+            trait.userInterfaceStyle == .light ? UIColor(rgb: 0xE9_E8_E6) : UIColor(rgb: 0x12_12_14)
+        }
 
         let bridge = SettingsBridge(
             presentAccountSwitcher: { [weak self] in

@@ -156,24 +156,39 @@ enum MorphingModal {
         // brand colour: the modal serves the settings screen, the player and
         // the feeds, and a tinted focus fill would speak for whichever one it
         // was borrowed from. Focus is stated the way the rest of the app
-        // states it — a light fill with dark ink (`DS.Color.pill`/`pillInk`).
-        static let panelBorder = Color(hex: 0xFFFFFF, alpha: 0.14)
-        /// A row at rest is a lightening of the glass, not a surface laid on
-        /// it — a second opaque fill over a material reads as a sticker.
-        static let rowFill = Color(hex: 0xFFFFFF, alpha: 0.10)
+        // states it — the opposite pole of the panel, with inverted ink
+        // (`DS.Color.pill`/`pillInk`).
+        //
+        // Every one of these is a pair, and has to be: the panel's surface is
+        // the *system's* material, which flips with the appearance whatever we
+        // do. Fixed white fills and near-black ink were a panel that turned
+        // pale in Light and kept drawing white-on-white.
+        static let panelBorder = Theme.dynamic(dark: 0xFFFFFF, light: 0x101010,
+                                               darkAlpha: 0.14, lightAlpha: 0.12)
+        /// A row at rest is a *shift* of the glass, not a surface laid on it —
+        /// a second opaque fill over a material reads as a sticker. Which
+        /// direction that shift goes is the whole appearance question.
+        static let rowFill = Theme.dynamic(dark: 0xFFFFFF, light: 0x101010,
+                                           darkAlpha: 0.10, lightAlpha: 0.07)
         /// The row that only leaves sits a step back from the ones that act.
-        static let rowMutedFill = Color(hex: 0xFFFFFF, alpha: 0.06)
-        static let rowFocusFill = Color(hex: 0xFFFFFF)
-        static let rowFocusInk = Color(hex: 0x0C0C0C)
+        static let rowMutedFill = Theme.dynamic(dark: 0xFFFFFF, light: 0x101010,
+                                                darkAlpha: 0.06, lightAlpha: 0.04)
+        static let rowFocusFill = Theme.dynamic(dark: 0xFFFFFF, light: 0x141414)
+        static let rowFocusInk = Theme.dynamic(dark: 0x0C0C0C, light: 0xF4F4F4)
         /// Destructive keeps its red — that is a meaning, not a brand.
         static let dangerFill = Theme.Colors.danger
         static let dangerInk = Color(hex: 0xFFFFFF)
-        /// Read against the system's white focused text field, not against us.
+        /// Read against the system's focused text field, which tvOS draws as a
+        /// light capsule in *both* appearances — so this stays dark in both,
+        /// and is deliberately not a pair.
         static let fieldFocusInk = Color(hex: 0x0C0C0C)
         /// bg-background/5 over the backdrop blur. Kept light on purpose: the
         /// material already carries most of the separation, and the screen
-        /// behind should stay recognisable rather than go to black.
-        static let scrimTint = Color(hex: 0x000000, alpha: 0.18)
+        /// behind should stay recognisable rather than go to black. Light gets
+        /// less of it — the pale material is already close to the tint, so the
+        /// same 18% would read as dirt on the screen rather than as a scrim.
+        static let scrimTint = Theme.dynamic(dark: 0x000000, light: 0x000000,
+                                             darkAlpha: 0.18, lightAlpha: 0.10)
 
         static var title: Font { Theme.Fonts.sans(20, .semibold) }
         static var message: Font { Theme.Fonts.sans(15) }
