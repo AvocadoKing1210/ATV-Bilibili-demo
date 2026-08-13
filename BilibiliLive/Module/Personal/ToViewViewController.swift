@@ -21,21 +21,15 @@ class ToViewViewController: StandardVideoCollectionViewController<ToViewData> {
         collectionVC.didLongPress = {
             [weak self] record in
             guard let self else { return }
-            let deleteAction = UIAlertAction(title: NSLocalizedString("Delete", comment: "Delete Action"), style: .destructive) { [weak self] _ in
-                guard let self,
-                      let record = record as? ToViewData
-                else { return }
-                del(with: record)
-            }
-            let cancelAction = UIAlertAction(title: NSLocalizedString("Cancel", comment: "Cancel Action"), style: .cancel)
-            let alert = UIAlertController(
+            presentModal(MorphingModalRequest(
                 title: NSLocalizedString("Confirm Delete", comment: "Delete Alert title"),
                 message: NSLocalizedString("Delete this video from your watch later list", comment: "Delete Alert message"),
-                preferredStyle: .alert
-            )
-            alert.addAction(deleteAction)
-            alert.addAction(cancelAction)
-            self.present(alert, animated: true, completion: nil)
+                options: [.init(NSLocalizedString("Delete", comment: "Delete Action"), role: .destructive) { [weak self] in
+                    guard let self, let record = record as? ToViewData else { return }
+                    del(with: record)
+                }],
+                cancelTitle: NSLocalizedString("Cancel", comment: "Cancel Action")
+            ))
         }
     }
 

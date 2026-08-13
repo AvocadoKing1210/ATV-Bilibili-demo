@@ -790,18 +790,17 @@ final class VideoTheaterViewController: UIViewController {
     /// 起播失败：弹窗 + 退出，都由容器做。
     ///
     /// 播放器自己 present 会在剧场还在做 present 动画时被 UIKit 丢掉，用户只剩一块
-    /// 不会动的黑屏——这正是"点了没反应"的一种。UIAlertController 会在 handler 之前
-    /// 先把自己关掉，所以那时 `dismiss` 关的就是剧场本身。
+    /// 不会动的黑屏——这正是"点了没反应"的一种。`MorphingModalController` 和它取代的
+    /// UIAlertController 一样，会在 handler 之前先把自己关掉，所以那时 `dismiss`
+    /// 关的就是剧场本身。
     private func showLoadFailure(_ message: String) {
         #if DEBUG
             if previewHoldsLoading { return }
         #endif
         setLoading(false)
-        let alert = UIAlertController(title: "播放失败", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+        presentModalNotice(title: "播放失败", message: message) { [weak self] in
             self?.dismiss(animated: true)
-        })
-        present(alert, animated: true)
+        }
     }
 
     private func frame(for mode: Mode) -> CGRect {

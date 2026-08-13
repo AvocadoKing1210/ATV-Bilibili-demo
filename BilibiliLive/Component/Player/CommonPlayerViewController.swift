@@ -136,13 +136,9 @@ class CommonPlayerViewController: UIViewController {
     func playerDidFail(player: AVPlayer) {}
 
     func showErrorAlertAndExit(title: String = "播放失败", message: String = "未知错误") {
-        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        let actionOk = UIAlertAction(title: "OK", style: .default) {
-            [weak self] _ in
+        presentModalNotice(title: title, message: message) { [weak self] in
             self?.dismiss(animated: true, completion: nil)
         }
-        alertController.addAction(actionOk)
-        present(alertController, animated: true, completion: nil)
     }
 
     func updateMenus() {
