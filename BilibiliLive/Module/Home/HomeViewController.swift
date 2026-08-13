@@ -20,6 +20,29 @@ struct HomeShelf {
     let load: () async throws -> [any DisplayData]
 }
 
+/// 继续观看 and 历史记录 are the same request — one narrowed to what is
+/// resumable, the other not — and they used to issue it twice, concurrently,
+/// as part of the same burst.
+///
+/// That is not merely wasteful. The two calls are indistinguishable to
+/// bilibili, arrive together, and 风控 answers duplicates in a burst often
+/// enough that one of the pair comes back empty while the other has content —
+/// which is exactly the shape of the bug: 历史记录 missing from the index while
+/// 继续观看, which can only ever be a *subset* of it, is on screen. One request,
+/// awaited by both shelves; a later reload starts a fresh one.
+private actor HistoryFetch {
+    private var inFlight: Task<[HistoryData], Never>?
+
+    func items() async -> [HistoryData] {
+        if let inFlight { return await inFlight.value }
+        let task = Task { await WebRequest.requestHistory() }
+        inFlight = task
+        let items = await task.value
+        inFlight = nil
+        return items
+    }
+}
+
 final class HomeViewController: UIViewController, BLTabBarContentVCProtocol {
     private enum Metrics {
         static let headerHeight: CGFloat = 92
@@ -42,33 +65,43 @@ final class HomeViewController: UIViewController, BLTabBarContentVCProtocol {
     private let skeletonShelves = 3
     private let skeletonCards = 4
 
+    /// Shared by the two history shelves so the page issues one history
+    /// request, not two. See `HistoryFetch`.
+    private let history = HistoryFetch()
+
     /// Shelves in display order. Titles double as the chip labels where they
     /// are short enough to read at 10 feet.
     ///
     /// 直播 and 热门 are deliberately absent: both are whole destinations on the
     /// rail, and a shelf showing only the first page of one is a worse version
     /// of the page it duplicates. The index leans on what is personal instead.
-    private let shelves: [HomeShelf] = [
-        // Same endpoint as 历史记录 below, narrowed to what is actually
-        // resumable — a finished entry has no position to continue from, and
-        // without the filter the two shelves would be one list shown twice.
-        HomeShelf(title: "继续观看", chip: "继续观看", subtitle: nil) {
-            await WebRequest.requestHistory().filter { $0.progress > 0 && $0.progress < $0.duration }
-        },
-        HomeShelf(title: "推荐", chip: "推荐", subtitle: "根据观看记录") {
-            try await ApiRequest.getFeeds()
-        },
-        HomeShelf(title: "历史记录", chip: "历史记录", subtitle: "最近看过") {
-            await WebRequest.requestHistory()
-        },
-        HomeShelf(title: "稍后再看", chip: "稍后再看", subtitle: nil) {
-            try await WebRequest.requestToView()
-        },
-        HomeShelf(title: "每周必看", chip: "每周必看", subtitle: nil) {
-            guard let latest = try await WebRequest.requestWeeklyWatchList().first else { return [] }
-            return try await WebRequest.requestWeeklyWatch(wid: latest.number)
-        },
-    ]
+    private lazy var shelves: [HomeShelf] = {
+        // Captures the fetch, not `self` — these closures outlive the property
+        // initialiser and must not hold the controller.
+        let history = history
+        return [
+            // Same request as 历史记录 below, narrowed to what is actually
+            // resumable — a finished entry has no position to continue from,
+            // and without the filter the two shelves would be one list shown
+            // twice.
+            HomeShelf(title: "继续观看", chip: "继续观看", subtitle: nil) {
+                await history.items().filter { $0.progress > 0 && $0.progress < $0.duration }
+            },
+            HomeShelf(title: "推荐", chip: "推荐", subtitle: "根据观看记录") {
+                try await ApiRequest.getFeeds()
+            },
+            HomeShelf(title: "历史记录", chip: "历史记录", subtitle: "最近看过") {
+                await history.items()
+            },
+            HomeShelf(title: "稍后再看", chip: "稍后再看", subtitle: nil) {
+                try await WebRequest.requestToView()
+            },
+            HomeShelf(title: "每周必看", chip: "每周必看", subtitle: nil) {
+                guard let latest = try await WebRequest.requestWeeklyWatchList().first else { return [] }
+                return try await WebRequest.requestWeeklyWatch(wid: latest.number)
+            },
+        ]
+    }()
 
     // MARK: - Lifecycle
 
@@ -183,10 +216,28 @@ final class HomeViewController: UIViewController, BLTabBarContentVCProtocol {
             var slots = [[any DisplayData]?](repeating: nil, count: shelves.count)
             var didFirstRender = false
 
+            // Before the burst, not alongside it. Every web shelf here is
+            // 风控-guarded and answers -352 to a jar with no buvid, and the only
+            // thing that installed one was a fire-and-forget call at launch
+            // racing this load. On a development machine the fingerprint wins
+            // that race; over a television's network it need not, and the
+            // shelves that lose it come back empty with nothing to show for it.
+            // It is a no-op once the jar has a buvid, so the common path is free.
+            await WebRequest.ensureFingerprint()
+
             await withTaskGroup(of: (Int, [any DisplayData]).self) { group in
                 for (index, shelf) in shelves.enumerated() {
                     group.addTask {
-                        do { return (index, try await shelf.load()) } catch { return (index, []) }
+                        do {
+                            return (index, try await shelf.load())
+                        } catch {
+                            // Otherwise a failed shelf and an empty one are the
+                            // same thing — both just vanish from the index, and
+                            // there is no way to tell which happened on a device
+                            // you cannot attach a debugger to.
+                            Logger.warn("home shelf \(shelf.title) failed: \(error)")
+                            return (index, [])
+                        }
                     }
                 }
 
@@ -239,6 +290,16 @@ final class HomeViewController: UIViewController, BLTabBarContentVCProtocol {
             chipBar.setTitles(loaded.map(\.shelf.chip))
             collectionView.reloadData()
             isLoading = false
+
+            // A shelf that returned nothing is dropped silently by design, but
+            // *which* ones were dropped is the only clue available when the
+            // index comes up short on a real device.
+            let missing = shelves.indices
+                .filter { slots[$0]?.isEmpty ?? true }
+                .map { shelves[$0].title }
+            if !missing.isEmpty {
+                Logger.warn("home shelves empty: \(missing.joined(separator: ", "))")
+            }
         }
     }
 

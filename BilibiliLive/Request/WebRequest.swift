@@ -233,6 +233,15 @@ enum WebRequest {
         }
     }
 
+    /// `ensureFingerprint`, awaited. Callers that must not start until the jar
+    /// has a buvid — the index page's shelves above all — need to hold for it
+    /// rather than fire alongside it.
+    static func ensureFingerprint() async {
+        await withCheckedContinuation { continuation in
+            ensureFingerprint { continuation.resume() }
+        }
+    }
+
     static func requestPB<T: SwiftProtobuf.Message>(method: HTTPMethod = .get,
                                                     url: URLConvertible,
                                                     parameters: Parameters = [:],
